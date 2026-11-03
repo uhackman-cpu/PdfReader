@@ -93,6 +93,29 @@ class HighlightAnchorResolverTest {
         assertEquals(targetStart..targetStart + "TARGET".lastIndex, resolved?.glyphRange)
     }
 
+    @Test
+    fun streamingResolverFindsBestMatchWithoutBuildingDocumentPageList() {
+        val first = page("an unrelated first page")
+        val target = page("before saved phrase after")
+        val saved = highlightFor(target, 7, 19).copy(pageIndex = 0)
+        var visited = 0
+        val pages = sequence {
+            visited++
+            yield(0 to first)
+            visited++
+            yield(7 to target)
+        }
+
+        val resolved = HighlightAnchorResolver.resolveInPages(pages, saved)
+
+        assertEquals(2, visited)
+        assertEquals(7, resolved?.pageIndex)
+        assertEquals(
+            "saved phrase",
+            target.textForGlyphRange(resolved!!.glyphRange.first, resolved.glyphRange.last)
+        )
+    }
+
     private fun highlightFor(page: PageText, start: Int, endExclusive: Int): Highlight {
         val startGlyph = page.glyphRangeForChars(start, endExclusive)?.first
             ?: error("Test range must map to glyphs")
