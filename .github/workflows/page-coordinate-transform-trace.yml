@@ -106,19 +106,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          python3 - <<'PY'
-          import base64, json
+          file_path="repos/${GITHUB_REPOSITORY}/contents/docs/READERA_PAGE_COORDINATE_TRANSFORM.md"
+          existing_sha="$(gh api "${file_path}" --jq .sha)"
+          COORDINATE_DOC_SHA="${existing_sha}" python3 - <<'PY'
+          import base64, json, os
           from pathlib import Path
           report = Path("analysis/readera-page-coordinate-transform.md").read_bytes()
           payload = {
-              "message": "Document ReadEra page coordinate trace",
+              "message": "Update ReadEra page coordinate trace",
               "content": base64.b64encode(report).decode("ascii"),
-              "branch": "main"
+              "branch": "main",
+              "sha": os.environ["COORDINATE_DOC_SHA"]
           }
           Path("/tmp/coordinate-report-payload.json").write_text(json.dumps(payload))
           PY
-          gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/docs/READERA_PAGE_COORDINATE_TRANSFORM.md" \
-            --input /tmp/coordinate-report-payload.json
+          gh api --method PUT "${file_path}" --input /tmp/coordinate-report-payload.json
       - uses: actions/upload-artifact@v4
         with:
           name: readera-page-coordinate-transform
