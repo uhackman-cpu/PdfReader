@@ -243,11 +243,13 @@ class MainActivity : Activity() {
                             val pageView = boundPageViews.entries.firstOrNull {
                                 it.value.pageIndex == index
                             }?.key
-                            val selectedText = pageView?.textForGlyphRange(start, end) ?: return@PdfPageAdapter
-                            selectedPageIndex = index
-                            selectedRange = minOf(start, end)..maxOf(start, end)
-                            selectedTextView.text = selectedText
-                            highlightButton.isEnabled = selectedText.isNotBlank()
+                            val selectedText = pageView?.textForGlyphRange(start, end)
+                            if (selectedText != null) {
+                                selectedPageIndex = index
+                                selectedRange = minOf(start, end)..maxOf(start, end)
+                                selectedTextView.text = selectedText
+                                highlightButton.isEnabled = selectedText.isNotBlank()
+                            }
                         },
                         onResolutionRequested = { index, dpi ->
                             requestSharperPage(index, dpi)
@@ -467,7 +469,7 @@ class MainActivity : Activity() {
         val oldBinding = entry.value
         if (oldBinding.cacheKey == key) return
         val image = bitmapCache.acquire(key) ?: return
-        val pageData = active.pages.getOrNull(pageIndex) ?: run {
+        if (active.pages.getOrNull(pageIndex) == null) {
             bitmapCache.release(key)
             return
         }
