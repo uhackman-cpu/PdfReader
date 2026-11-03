@@ -13,11 +13,15 @@ data class Highlight(
     val text: String,
     val color: Int,
     val note: String,
-    val createdAt: Long
+    val createdAt: Long,
+    val startChar: Int = -1,
+    val endChar: Int = -1,
+    val prefixText: String = "",
+    val suffixText: String = ""
 )
 
 class HighlightStore(context: Context) :
-    SQLiteOpenHelper(context, "reader_annotations.db", null, 1) {
+    SQLiteOpenHelper(context, "reader_annotations.db", null, 2) {
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -28,6 +32,10 @@ class HighlightStore(context: Context) :
                 page_index INTEGER NOT NULL,
                 start_glyph INTEGER NOT NULL,
                 end_glyph INTEGER NOT NULL,
+                start_char INTEGER NOT NULL DEFAULT -1,
+                end_char INTEGER NOT NULL DEFAULT -1,
+                prefix_text TEXT NOT NULL DEFAULT '',
+                suffix_text TEXT NOT NULL DEFAULT '',
                 selected_text TEXT NOT NULL,
                 color INTEGER NOT NULL,
                 note TEXT NOT NULL DEFAULT '',
@@ -41,7 +49,14 @@ class HighlightStore(context: Context) :
         )
     }
 
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = Unit
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            db.execSQL("ALTER TABLE highlights ADD COLUMN start_char INTEGER NOT NULL DEFAULT -1")
+            db.execSQL("ALTER TABLE highlights ADD COLUMN end_char INTEGER NOT NULL DEFAULT -1")
+            db.execSQL("ALTER TABLE highlights ADD COLUMN prefix_text TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE highlights ADD COLUMN suffix_text TEXT NOT NULL DEFAULT ''")
+        }
+    }
 
     fun add(
         documentKey: String,
@@ -50,13 +65,21 @@ class HighlightStore(context: Context) :
         endGlyph: Int,
         text: String,
         color: Int,
-        note: String
+        note: String,
+        startChar: Int,
+        endChar: Int,
+        prefixText: String,
+        suffixText: String
     ): Long {
         val values = ContentValues().apply {
             put("document_key", documentKey)
             put("page_index", pageIndex)
             put("start_glyph", minOf(startGlyph, endGlyph))
             put("end_glyph", maxOf(startGlyph, endGlyph))
+            put("start_char", startChar)
+            put("end_char", endChar)
+            put("prefix_text", prefixText)
+            put("suffix_text", suffixText)
             put("selected_text", text)
             put("color", color)
             put("note", note)
@@ -86,7 +109,11 @@ class HighlightStore(context: Context) :
                         text = cursor.getString(cursor.getColumnIndexOrThrow("selected_text")),
                         color = cursor.getInt(cursor.getColumnIndexOrThrow("color")),
                         note = cursor.getString(cursor.getColumnIndexOrThrow("note")),
-                        createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at"))
+                        createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at")),
+                        startChar = cursor.getInt(cursor.getColumnIndexOrThrow("start_char")),
+                        endChar = cursor.getInt(cursor.getColumnIndexOrThrow("end_char")),
+                        prefixText = cursor.getString(cursor.getColumnIndexOrThrow("prefix_text")),
+                        suffixText = cursor.getString(cursor.getColumnIndexOrThrow("suffix_text"))
                     )
                 )
             }
