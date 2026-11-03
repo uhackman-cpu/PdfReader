@@ -21,6 +21,8 @@ data class PageDescriptor(
 class GlyphTextStripper : PDFTextStripper() {
     private val builders = mutableListOf<PageBuilder>()
     private var current: PageBuilder? = null
+    private var streamConsumer: ((Int, PageText) -> Unit)? = null
+    private var streamedPageIndex = -1
 
     init {
         setSortByPosition(true)
@@ -36,6 +38,16 @@ class GlyphTextStripper : PDFTextStripper() {
         )
         builders.add(builder)
         current = builder
+        if (streamConsumer != null) streamedPageIndex += 1
+    }
+
+    override fun endPage(page: PDPage) {
+        super.endPage(page)
+        val consumer = streamConsumer ?: return
+        val builder = current ?: return
+        consumer(streamedPageIndex, toPageText(builder))
+        builders.remove(builder)
+        current = null
     }
 
     override fun writeString(text: String, textPositions: MutableList<TextPosition>) {
@@ -78,7 +90,9 @@ class GlyphTextStripper : PDFTextStripper() {
             previous = position
         }
 
-        super.writeString(text, textPositions)
+        if (streamConsumer == null) {
+            super.writeString(text, textPositions)
+        }
     }
 
     fun extract(document: PDDocument): List<PageText> {
@@ -88,6 +102,27 @@ class GlyphTextStripper : PDFTextStripper() {
         setEndPage(document.numberOfPages)
         getText(document)
         return builders.map(::toPageText)
+    }
+
+    /**
+     * Walks the document once and emits each page's text/geometry immediately.
+     * The caller must consume the callback synchronously; only the current
+     * page's glyph records are retained by this stripper.
+     */
+    fun forEachPage(document: PDDocument, consumer: (Int, PageText) -> Unit) {
+        builders.clear()
+        current = null
+        streamedPageIndex = -1
+        streamConsumer = consumer
+        setStartPage(1)
+        setEndPage(document.numberOfPages)
+        try {
+            getText(document)
+        } finally {
+            streamConsumer = null
+            builders.clear()
+            current = null
+        }
     }
 
     /** Extracts one page only; callers can keep a bounded cache of the result. */
