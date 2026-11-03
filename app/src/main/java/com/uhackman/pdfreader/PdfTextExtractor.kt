@@ -29,13 +29,10 @@ class GlyphTextStripper : PDFTextStripper() {
     override fun startPage(page: PDPage) {
         super.startPage(page)
         val cropBox = page.cropBox
-        val rotation = normalizedRotation(page.rotation)
-        val swapsAxes = rotation == 90 || rotation == 270
-        val width = if (swapsAxes) cropBox.height else cropBox.width
-        val height = if (swapsAxes) cropBox.width else cropBox.height
+        val dimensions = displayedPageDimensions(cropBox.width, cropBox.height, page.rotation)
         val builder = PageBuilder(
-            width = width.coerceAtLeast(1f),
-            height = height.coerceAtLeast(1f)
+            width = dimensions.x.coerceAtLeast(1f),
+            height = dimensions.y.coerceAtLeast(1f)
         )
         builders.add(builder)
         current = builder
@@ -54,7 +51,6 @@ class GlyphTextStripper : PDFTextStripper() {
             // run. Geometry uses page-rotation-adjusted coordinates so it is
             // in the same orientation as PDFRenderer's bitmap.
             val directionX = position.xDirAdj
-            val directionWidth = abs(position.widthDirAdj)
             val prior = previous
             if (prior != null) {
                 val gap = directionX - (prior.xDirAdj + abs(prior.widthDirAdj))
@@ -134,16 +130,13 @@ class GlyphTextStripper : PDFTextStripper() {
 
         private fun describePage(page: PDPage): PageDescriptor {
             val cropBox = page.cropBox
-            val rotation = normalizedRotation(page.rotation)
-            val swapsAxes = rotation == 90 || rotation == 270
+            val rotation = ((page.rotation % 360) + 360) % 360
+            val dimensions = displayedPageDimensions(cropBox.width, cropBox.height, rotation)
             return PageDescriptor(
-                widthPoints = (if (swapsAxes) cropBox.height else cropBox.width).coerceAtLeast(1f),
-                heightPoints = (if (swapsAxes) cropBox.width else cropBox.height).coerceAtLeast(1f),
+                widthPoints = dimensions.x.coerceAtLeast(1f),
+                heightPoints = dimensions.y.coerceAtLeast(1f),
                 rotationDegrees = rotation
             )
         }
-
-        private fun normalizedRotation(value: Int): Int =
-            ((value % 360) + 360) % 360
     }
 }
