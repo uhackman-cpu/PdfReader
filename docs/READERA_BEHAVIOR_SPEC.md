@@ -97,3 +97,30 @@ The saved annotation list is held on the document model (C5139l.f20213b0). The a
 - Render pages independently and apply focus-aware pinch zoom in the view layer.
 
 The initial app intentionally uses page-at-a-time navigation while this end-to-end flow is validated. Continuous scrolling, robust re-anchoring after document edits, OCR for image-only PDFs, and richer selection handles remain future work.
+
+
+## 8. Persisted selection-anchor lifecycle — additional Java-side evidence
+
+The saved annotation is not anchored only by a raw character offset. The Java-side position model keeps two XPath-like boundary strings plus page/index fallbacks:
+
+- `C3928j.f15697t` and `f15698u` hold the two boundary XPath strings; `f15687j` and `f15688k` hold their resolved text-unit indexes/pages; `f15699v` is passed as the XPath mode/type.
+- `AbstractC2748x0.m12198a()` builds both boundary anchors from the active selection. `AbstractC2468y.m11574x()` and `m11555e()` use the selected endpoint records' `C3927i.f15685j` values and distinct endpoint markers (0 and 1). The same builder captures the selected endpoint page and a normalized reading-position point.
+- `JniDoc.pageXPathToIndexJni()` resolves a stored boundary XPath back to a current text-unit index. `pageXPathFromIndexJni()` regenerates an XPath from a page/index when the saved XPath no longer resolves or disagrees with the stored index.
+- Legacy rectangle-based position strings can be converted with `pageXPathFromRectJni()`; `pageXPathListToIndexJni()` converts a batch of serialized anchor entries to indexes.
+- `pageSimpleTextJni()` is called through the page model's page/start/end range accessor, separate from the five-value positioned-text stream.
+- The page annotation renderer constructs a composite page + two-boundary-anchor + mode request for `bookmarkRectJni()`. The JNI wrapper returns groups of four floats plus a string; Java turns those into normalized rectangle records and applies annotation style separately.
+
+This establishes an anchor-resolution and fallback lifecycle at the Java/JNI boundary. It still does not reveal the native command handler's complete XPath grammar or the final glyph-layout routine.
+
+## 9. Selection gesture and endpoint UI details
+
+- The initial word-selection constructor `C2467x.m11517C()` is invoked from the LONG_PRESS path after a page text hit test. A normal initial press does not itself create a ReadEra text selection.
+- In word mode, drag updates call `m11545v()`; in character mode they call `m11544s()`. The latter also receives a movement/scale parameter and adjusts the active endpoint record.
+- `m11536i()` draws the selected text-unit rectangles. `m11537j()` draws the two endpoint handles for character selection; the word-selection mode suppresses those handles.
+- `m11539n()` assembles selected text in page order, while `m11540o()` returns a page-keyed map of selected rectangles. The data model can therefore represent selections crossing page boundaries even though the first independent app milestone is page-at-a-time.
+
+## 10. Analysis closure and explicit limits
+
+The behavior needed to design an independent text-selection/highlight flow is now sufficiently specified: positioned text records, word/character selection modes, endpoint handles, cross-page selection data, text search and search rectangles, two-boundary persistent anchors with index/rectangle fallback, page-level highlight rectangles, document-wide annotation navigation, and the render/zoom interaction path are all covered by Java consumers and JNI contracts.
+
+The remaining unknowns are implementation internals rather than missing user-visible behavior: the exact native anchor-command handler and XPath grammar, its final glyph-to-rectangle algorithm, and the precise upstream PDF engine identity. The available wrapper disassembly does not establish these facts. Further guessing would be unsafe and is not required for an independent implementation using its own PDF text/layout engine. These points remain explicitly unverified.
