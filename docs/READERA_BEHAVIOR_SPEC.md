@@ -97,7 +97,7 @@ The saved annotation list is held on the document model (C5139l.f20213b0). The a
 - Render pages independently and apply focus-aware pinch zoom and pan.
 - After a pinch gesture, request a sharper page raster (up to 288 DPI), capped by a 12-megapixel page-area budget; replace the bitmap without resetting zoom, pan, selection, or overlays.
 
-The independent app still uses page-at-a-time navigation. Continuous vertical scrolling, cross-page selection, OCR for scanned PDFs, and verified geometry handling for rotated/cropped pages remain future work. Physical-device touch and rendering validation is still outstanding.
+The independent app now uses continuous vertical scrolling with recycled page views, lazy text/bitmap caches, cross-page selection, combined selected text, and per-page persistent highlight anchors grouped as one document selection. Rotated/cropped coordinate transforms use the renderer's displayed page dimensions. OCR for scanned PDFs and tiled rendering remain future work. Physical-device touch and rendering validation is still outstanding.
 
 
 ## 8. Persisted selection-anchor lifecycle — additional Java-side evidence
