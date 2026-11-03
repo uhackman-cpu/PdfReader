@@ -241,3 +241,29 @@ object RenderDpiPolicy {
         return minOf(desired, maxDpi.coerceAtLeast(MIN_DPI))
     }
 }
+
+
+enum class GestureIntent {
+    UNDECIDED,
+    VERTICAL_SCROLL,
+    HORIZONTAL_SELECTION
+}
+
+/** Keeps vertical page scrolling distinct from horizontal text selection. */
+object GestureArbitration {
+    fun classify(dx: Float, dy: Float, touchSlop: Float): GestureIntent {
+        if (!dx.isFinite() || !dy.isFinite() || !touchSlop.isFinite()) {
+            return GestureIntent.UNDECIDED
+        }
+        val horizontal = kotlin.math.abs(dx)
+        val vertical = kotlin.math.abs(dy)
+        if (maxOf(horizontal, vertical) <= touchSlop.coerceAtLeast(0f)) {
+            return GestureIntent.UNDECIDED
+        }
+        return if (vertical > horizontal) {
+            GestureIntent.VERTICAL_SCROLL
+        } else {
+            GestureIntent.HORIZONTAL_SELECTION
+        }
+    }
+}

@@ -12,6 +12,7 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import android.view.ViewConfiguration
 import kotlin.math.max
 import kotlin.math.min
 
@@ -50,6 +51,12 @@ class PdfPageView @JvmOverloads constructor(
     private var offsetY = 0f
     private var selecting = false
     private var wordSelecting = false
+    private var wordSelectionHandlesHidden = false
+    private var pendingTextPress = false
+    private var downGlyphIndex = -1
+    private var downX = 0f
+    private var downY = 0f
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop.toFloat()
     private var wordAnchorRange: IntRange? = null
     private var panning = false
     private var selectionAnchor = -1
@@ -63,6 +70,7 @@ class PdfPageView @JvmOverloads constructor(
         context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
+                parent?.requestDisallowInterceptTouchEvent(true)
                 val nextZoom = (zoom * detector.scaleFactor).coerceIn(1f, 5f)
                 val ratio = nextZoom / zoom
                 offsetX = detector.focusX - (detector.focusX - offsetX) * ratio
@@ -78,6 +86,7 @@ class PdfPageView @JvmOverloads constructor(
             }
 
             override fun onScaleEnd(detector: ScaleGestureDetector) {
+                parent?.requestDisallowInterceptTouchEvent(false)
                 val targetDpi = (BASE_RENDER_DPI * zoom).coerceAtMost(MAX_RENDER_DPI)
                 if (targetDpi > BASE_RENDER_DPI * 1.25f) {
                     onResolutionRequested?.invoke(targetDpi)
@@ -92,15 +101,18 @@ class PdfPageView @JvmOverloads constructor(
             override fun onDown(event: MotionEvent): Boolean = true
 
             override fun onLongPress(event: MotionEvent) {
-                if (!selecting || panning || draggingEndpoint >= 0) return
+                if (!pendingTextPress || panning || draggingEndpoint >= 0) return
                 val currentPage = page ?: return
-                val glyphIndex = hitTest(event.x, event.y)
-                val range = TextSelection.wordRangeForGlyph(currentPage, glyphIndex) ?: return
+                val range = TextSelection.wordRangeForGlyph(currentPage, downGlyphIndex) ?: return
+                pendingTextPress = false
+                selecting = true
                 wordSelecting = true
+                wordSelectionHandlesHidden = true
                 wordAnchorRange = range
                 selectionRange = range
                 selectionAnchor = range.first
                 selectionFocus = range.last
+                parent?.requestDisallowInterceptTouchEvent(true)
                 notifySelection()
                 invalidate()
             }
@@ -112,8 +124,7 @@ class PdfPageView @JvmOverloads constructor(
         setBackgroundColor(Color.rgb(242, 242, 242))
     }
 
-    fun setPage(pageText: PageText, pageBitmap: Bitmap, pageHighlights: List<Highlight>) {
-        val oldBitmap = bitmap
+    fun setPage(pageText: PageText, pageBitmap: Bitmap?, pageHighlights: List<Highlight>) {
         page = pageText
         glyphSpatialIndex = GlyphSpatialIndex(pageText.glyphs)
         bitmap = pageBitmap
@@ -123,14 +134,39 @@ class PdfPageView @JvmOverloads constructor(
         selectionAnchor = -1
         selectionFocus = -1
         draggingEndpoint = -1
+        selecting = false
         wordSelecting = false
+        wordSelectionHandlesHidden = false
+        pendingTextPress = false
+        downGlyphIndex = -1
         wordAnchorRange = null
         zoom = 1f
         offsetX = 0f
         offsetY = 0f
-        if (oldBitmap != null && oldBitmap !== pageBitmap && !oldBitmap.isRecycled) {
-            oldBitmap.recycle()
-        }
+        invalidate()
+    }
+
+    /** Detaches page data before the RecyclerView returns this view to its pool. */
+    fun clearPage() {
+        page = null
+        glyphSpatialIndex = GlyphSpatialIndex(emptyList())
+        bitmap = null
+        highlights = emptyList()
+        searchRange = null
+        selectionRange = null
+        selectionAnchor = -1
+        selectionFocus = -1
+        draggingEndpoint = -1
+        selecting = false
+        wordSelecting = false
+        wordSelectionHandlesHidden = false
+        pendingTextPress = false
+        downGlyphIndex = -1
+        wordAnchorRange = null
+        panning = false
+        zoom = 1f
+        offsetX = 0f
+        offsetY = 0f
         invalidate()
     }
 
@@ -139,11 +175,8 @@ class PdfPageView @JvmOverloads constructor(
      * pan, text selection, search matches, or annotation overlays.
      */
     fun replaceBitmap(pageBitmap: Bitmap) {
-        val oldBitmap = bitmap
+        // The bounded cache owns this bitmap; views only hold a leased reference.
         bitmap = pageBitmap
-        if (oldBitmap != null && oldBitmap !== pageBitmap && !oldBitmap.isRecycled) {
-            oldBitmap.recycle()
-        }
         invalidate()
     }
 
@@ -165,6 +198,7 @@ class PdfPageView @JvmOverloads constructor(
         selectionFocus = last
         draggingEndpoint = -1
         wordSelecting = false
+        wordSelectionHandlesHidden = false
         wordAnchorRange = null
         invalidate()
     }
@@ -175,6 +209,9 @@ class PdfPageView @JvmOverloads constructor(
         selectionFocus = -1
         draggingEndpoint = -1
         wordSelecting = false
+        wordSelectionHandlesHidden = false
+        pendingTextPress = false
+        downGlyphIndex = -1
         wordAnchorRange = null
         invalidate()
     }
@@ -183,7 +220,8 @@ class PdfPageView @JvmOverloads constructor(
         super.onDraw(canvas)
         val image = bitmap
         if (image == null) {
-            canvas.drawText("Open a PDF to begin", 28f, height / 2f, hintPaint)
+            val message = if (page == null) "Open a PDF to begin" else "Rendering page…"
+            canvas.drawText(message, 28f, height / 2f, hintPaint)
             return
         }
 
@@ -212,7 +250,7 @@ class PdfPageView @JvmOverloads constructor(
         }
         selectionRange?.let {
             drawGlyphRange(canvas, rect, it, Color.argb(120, 255, 152, 0))
-            drawSelectionHandles(canvas, rect, it)
+            if (!wordSelectionHandlesHidden) drawSelectionHandles(canvas, rect, it)
         }
         canvas.restore()
     }
@@ -350,6 +388,7 @@ class PdfPageView @JvmOverloads constructor(
     private fun updateDraggedEndpoint(glyphIndex: Int) {
         val range = selectionRange ?: return
         wordSelecting = false
+        wordSelectionHandlesHidden = false
         wordAnchorRange = null
         if (draggingEndpoint == 0) {
             if (glyphIndex <= range.last) {
@@ -374,8 +413,13 @@ class PdfPageView @JvmOverloads constructor(
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
         scaleDetector.onTouchEvent(event)
-        if (event.pointerCount == 1) gestureDetector.onTouchEvent(event)
+        if (event.pointerCount == 1 && !scaleDetector.isInProgress) {
+            gestureDetector.onTouchEvent(event)
+        }
+
         if (event.pointerCount > 1 || scaleDetector.isInProgress) {
+            parent?.requestDisallowInterceptTouchEvent(true)
+            pendingTextPress = false
             selecting = false
             wordSelecting = false
             wordAnchorRange = null
@@ -386,31 +430,34 @@ class PdfPageView @JvmOverloads constructor(
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                downX = event.x
+                downY = event.y
+                downGlyphIndex = hitTest(event.x, event.y)
+                pendingTextPress = downGlyphIndex >= 0
                 wordSelecting = false
                 wordAnchorRange = null
+
                 val endpoint = hitTestSelectionHandle(event.x, event.y)
                 if (endpoint >= 0) {
                     draggingEndpoint = endpoint
                     selecting = false
+                    pendingTextPress = false
                     panning = false
+                    parent?.requestDisallowInterceptTouchEvent(true)
                     return true
                 }
 
-                val glyphIndex = hitTest(event.x, event.y)
-                if (glyphIndex >= 0) {
-                    selectionAnchor = glyphIndex
-                    selectionFocus = glyphIndex
-                    selectionRange = glyphIndex..glyphIndex
-                    selecting = true
-                    panning = false
-                    notifySelection()
-                } else {
+                if (zoom > 1.01f) {
                     selecting = false
-                    panning = zoom > 1.01f
+                    pendingTextPress = false
+                    panning = true
                     lastTouchX = event.x
                     lastTouchY = event.y
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                } else {
+                    selecting = false
+                    panning = false
                 }
-                invalidate()
                 return true
             }
 
@@ -418,6 +465,39 @@ class PdfPageView @JvmOverloads constructor(
                 if (draggingEndpoint >= 0) {
                     val glyphIndex = hitTest(event.x, event.y)
                     if (glyphIndex >= 0) updateDraggedEndpoint(glyphIndex)
+                } else if (panning) {
+                    offsetX += event.x - lastTouchX
+                    offsetY += event.y - lastTouchY
+                    lastTouchX = event.x
+                    lastTouchY = event.y
+                    invalidate()
+                } else if (pendingTextPress && !selecting) {
+                    when (GestureArbitration.classify(
+                        event.x - downX,
+                        event.y - downY,
+                        touchSlop
+                    )) {
+                        GestureIntent.VERTICAL_SCROLL -> {
+                            pendingTextPress = false
+                        }
+                        GestureIntent.HORIZONTAL_SELECTION -> {
+                            parent?.requestDisallowInterceptTouchEvent(true)
+                            pendingTextPress = false
+                            selecting = true
+                            wordSelecting = false
+                            wordSelectionHandlesHidden = false
+                            selectionAnchor = downGlyphIndex
+                            val glyphIndex = hitTest(event.x, event.y)
+                            if (glyphIndex >= 0) {
+                                selectionFocus = glyphIndex
+                                selectionRange = min(selectionAnchor, selectionFocus)..
+                                    max(selectionAnchor, selectionFocus)
+                                notifySelection()
+                                invalidate()
+                            }
+                        }
+                        GestureIntent.UNDECIDED -> Unit
+                    }
                 } else if (selecting) {
                     val glyphIndex = hitTest(event.x, event.y)
                     if (glyphIndex >= 0) {
@@ -445,12 +525,6 @@ class PdfPageView @JvmOverloads constructor(
                         notifySelection()
                         invalidate()
                     }
-                } else if (panning) {
-                    offsetX += event.x - lastTouchX
-                    offsetY += event.y - lastTouchY
-                    lastTouchX = event.x
-                    lastTouchY = event.y
-                    invalidate()
                 }
                 return true
             }
@@ -459,6 +533,7 @@ class PdfPageView @JvmOverloads constructor(
                 selecting = false
                 wordSelecting = false
                 wordAnchorRange = null
+                pendingTextPress = false
                 panning = false
                 draggingEndpoint = -1
                 performClick()
@@ -469,6 +544,7 @@ class PdfPageView @JvmOverloads constructor(
                 selecting = false
                 wordSelecting = false
                 wordAnchorRange = null
+                pendingTextPress = false
                 panning = false
                 draggingEndpoint = -1
                 return true
