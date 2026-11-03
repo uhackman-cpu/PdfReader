@@ -47,6 +47,11 @@ class MainActivity : Activity() {
     private val requestedRenderDpiByPage = mutableMapOf<Int, Float>()
     private var searchGeneration = 0L
     private var selectedPageIndex = -1
+    private var documentSelection: DocumentSelection? = null
+    private var selectionAnchor: SelectionEndpoint? = null
+    private var selectionFocus: SelectionEndpoint? = null
+    private var activeSelectionGesture = false
+    private var selectionRequestGeneration = 0L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -224,6 +229,11 @@ class MainActivity : Activity() {
                     currentPage = 0
                     selectedPageIndex = -1
                     selectedRange = null
+                    documentSelection = null
+                    selectionAnchor = null
+                    selectionFocus = null
+                    activeSelectionGesture = false
+                    selectionRequestGeneration++
                     pendingSearchHit = null
                     pendingHighlight = null
                     searchHits = emptyList()
@@ -251,6 +261,9 @@ class MainActivity : Activity() {
                                 selectedTextView.text = selectedText
                                 highlightButton.isEnabled = selectedText.isNotBlank()
                             }
+                        },
+                        onDocumentSelectionGesture = { index, event ->
+                            handleDocumentSelectionGesture(index, event)
                         },
                         onResolutionRequested = { index, dpi ->
                             requestSharperPage(index, dpi)
@@ -309,6 +322,7 @@ class MainActivity : Activity() {
             requestPageText(pageIndex)
         }
         applyPendingPageState(pageIndex, view)
+        applySelectionToBoundPage(pageIndex, view)
         if (cached == null) requestPageRender(pageIndex, requestedDpi)
     }
 
@@ -369,6 +383,7 @@ class MainActivity : Activity() {
             resolveStoredHighlightsForPage(active, pageIndex, pageText)
             view.setHighlights(active.resolvedHighlights.filter { it.pageIndex == pageIndex })
             applyPendingPageState(pageIndex, view)
+            applySelectionToBoundPage(pageIndex, view)
         }
     }
 
@@ -394,6 +409,30 @@ class MainActivity : Activity() {
                 )
             )
         }
+    }
+
+    private fun applySelectionToBoundPage(pageIndex: Int, view: PdfPageView) {
+        val selection = documentSelection
+        if (selection != null) {
+            val item = selection.ranges.firstOrNull { it.pageIndex == pageIndex }
+            view.setDocumentSelectionRange(
+                item?.let { it.startGlyph..it.endGlyph },
+                pageIndex == selection.ranges.first().pageIndex,
+                pageIndex == selection.ranges.last().pageIndex,
+                true
+            )
+            return
+        }
+        val anchor = selectionAnchor ?: return
+        val focus = selectionFocus ?: return
+        val page = view.getPageText() ?: return
+        val range = DocumentSelectionBuilder.rangeForPage(anchor, focus, pageIndex, page.glyphs.size)
+        view.setDocumentSelectionRange(
+            range,
+            pageIndex == minOf(anchor.pageIndex, focus.pageIndex),
+            pageIndex == maxOf(anchor.pageIndex, focus.pageIndex),
+            !activeSelectionGesture
+        )
     }
 
     private fun applyPendingPageState(pageIndex: Int, view: PdfPageView) {
@@ -519,11 +558,206 @@ class MainActivity : Activity() {
     }
 
     private fun clearVisibleSelections() {
+        selectionRequestGeneration++
+        documentSelection = null
+        selectionAnchor = null
+        selectionFocus = null
+        activeSelectionGesture = false
         boundPageViews.keys.forEach { it.clearSelection() }
         selectedRange = null
         selectedPageIndex = -1
         selectedTextView.text = "Selected text will appear here"
         highlightButton.isEnabled = false
+    }
+
+    private fun handleDocumentSelectionGesture(
+        sourcePageIndex: Int,
+        event: SelectionGestureEvent
+    ) {
+        if (event.cancelled) {
+            clearVisibleSelections()
+            statusText.text = "Selection cancelled"
+            return
+        }
+        if (event.started) {
+            selectionAnchor = SelectionEndpoint(
+                sourcePageIndex,
+                minOf(event.anchorStartGlyph, event.anchorEndGlyph),
+                maxOf(event.anchorStartGlyph, event.anchorEndGlyph)
+            )
+            selectionFocus = null
+            documentSelection = null
+            selectionRequestGeneration++
+            activeSelectionGesture = true
+            selectedRange = null
+            selectedPageIndex = -1
+            highlightButton.isEnabled = false
+        }
+        val anchor = selectionAnchor ?: return
+        val target = findSelectionTarget(event.rawX, event.rawY)
+        if (target != null) {
+            val pageText = target.view.getPageText()
+            if (pageText != null) {
+                val focusRange = if (event.wordMode) {
+                    TextSelection.wordRangeForGlyph(pageText, target.glyphIndex)
+                        ?: (target.glyphIndex..target.glyphIndex)
+                } else target.glyphIndex..target.glyphIndex
+                selectionFocus = SelectionEndpoint(
+                    target.pageIndex, focusRange.first, focusRange.last
+                )
+                applySelectionPreview(anchor, selectionFocus!!, event.finished)
+            }
+        }
+        if (event.finished) {
+            activeSelectionGesture = false
+            selectionFocus?.let { resolveDocumentSelection(anchor, it) }
+        }
+    }
+
+    private fun findSelectionTarget(rawX: Float, rawY: Float): SelectionTarget? {
+        val listLocation = IntArray(2)
+        pageList.getLocationOnScreen(listLocation)
+        val listX = rawX - listLocation[0]
+        val listY = rawY - listLocation[1]
+        if (listX < 0f || listX > pageList.width ||
+            listY < 0f || listY > pageList.height
+        ) return null
+        val edge = (56f * resources.displayMetrics.density).toInt()
+        if (listY < edge) {
+            pageList.scrollBy(0, -max(2, ((edge - listY) * 0.35f).toInt()))
+        } else if (listY > pageList.height - edge) {
+            pageList.scrollBy(0, max(2, ((listY - (pageList.height - edge)) * 0.35f).toInt()))
+        }
+
+        var bestView: PdfPageView? = null
+        var bestBinding: BoundPage? = null
+        var bestLeft = 0f
+        var bestTop = 0f
+        var bestScore = Float.POSITIVE_INFINITY
+        for ((view, binding) in boundPageViews) {
+            val location = IntArray(2)
+            view.getLocationOnScreen(location)
+            val left = location[0].toFloat()
+            val top = location[1].toFloat()
+            val right = left + view.width
+            val bottom = top + view.height
+            val dx = when {
+                rawX < left -> left - rawX
+                rawX > right -> rawX - right
+                else -> 0f
+            }
+            val dy = when {
+                rawY < top -> top - rawY
+                rawY > bottom -> rawY - bottom
+                else -> 0f
+            }
+            val score = dy * 4f + dx
+            if (score < bestScore) {
+                bestScore = score
+                bestView = view
+                bestBinding = binding
+                bestLeft = left
+                bestTop = top
+            }
+        }
+        val targetView = bestView ?: return null
+        val binding = bestBinding ?: return null
+        if (targetView.getPageText() == null) {
+            requestPageText(binding.pageIndex)
+            return null
+        }
+        val localX = (rawX - bestLeft).coerceIn(0f, targetView.width.toFloat())
+        val localY = (rawY - bestTop).coerceIn(0f, targetView.height.toFloat())
+        val glyphIndex = targetView.glyphAtLocal(localX, localY, true)
+        if (glyphIndex < 0) return null
+        return SelectionTarget(binding.pageIndex, targetView, glyphIndex)
+    }
+
+    private fun applySelectionPreview(
+        anchor: SelectionEndpoint,
+        focus: SelectionEndpoint,
+        finished: Boolean
+    ) {
+        val firstPage = minOf(anchor.pageIndex, focus.pageIndex)
+        val lastPage = maxOf(anchor.pageIndex, focus.pageIndex)
+        for ((view, binding) in boundPageViews) {
+            val page = view.getPageText()
+            val range = page?.let {
+                DocumentSelectionBuilder.rangeForPage(anchor, focus, binding.pageIndex, it.glyphs.size)
+            }
+            view.setDocumentSelectionRange(
+                range,
+                binding.pageIndex == firstPage,
+                binding.pageIndex == lastPage,
+                finished
+            )
+        }
+        if (anchor.pageIndex == focus.pageIndex) {
+            val page = boundPageViews.entries.firstOrNull {
+                it.value.pageIndex == focus.pageIndex
+            }?.key?.getPageText()
+            val range = page?.let {
+                DocumentSelectionBuilder.rangeForPage(anchor, focus, focus.pageIndex, it.glyphs.size)
+            }
+            selectedTextView.text = if (page != null && range != null) {
+                page.textForGlyphRange(range.first, range.last)
+            } else "Selecting text…"
+        } else {
+            selectedTextView.text = "Selecting pages " +
+                (firstPage + 1) + "–" + (lastPage + 1) + "…"
+        }
+        highlightButton.isEnabled = false
+    }
+
+    private fun resolveDocumentSelection(
+        anchor: SelectionEndpoint,
+        focus: SelectionEndpoint
+    ) {
+        val active = session ?: return
+        val generation = ++selectionRequestGeneration
+        statusText.text = "Preparing selection across pages…"
+        io.execute {
+            val builder = DocumentSelectionBuilder.streaming(anchor, focus, active.pages.size)
+            var failure: Exception? = null
+            try {
+                synchronized(active.document) {
+                    GlyphTextStripper().forEachPage(
+                        active.document, builder.firstPageIndex, builder.lastPageIndex
+                    ) { pageIndex, pageText ->
+                        active.pageTextCache.put(pageIndex, pageText)
+                        builder.accept(pageIndex, pageText)
+                    }
+                }
+            } catch (error: Exception) {
+                failure = error
+            }
+            val resolved = if (failure == null) builder.result() else null
+            runOnUiThread {
+                if (session !== active || selectionRequestGeneration != generation) return@runOnUiThread
+                if (resolved == null) {
+                    documentSelection = null
+                    selectedTextView.text = "Could not resolve selected text"
+                    highlightButton.isEnabled = false
+                    statusText.text = "Cross-page selection could not be resolved"
+                    return@runOnUiThread
+                }
+                documentSelection = resolved
+                selectionAnchor = resolved.anchor
+                selectionFocus = resolved.focus
+                for ((view, binding) in boundPageViews) {
+                    val item = resolved.ranges.firstOrNull { it.pageIndex == binding.pageIndex }
+                    view.setDocumentSelectionRange(
+                        item?.let { it.startGlyph..it.endGlyph },
+                        binding.pageIndex == resolved.ranges.first().pageIndex,
+                        binding.pageIndex == resolved.ranges.last().pageIndex,
+                        true
+                    )
+                }
+                selectedTextView.text = resolved.selectedText
+                highlightButton.isEnabled = resolved.ranges.isNotEmpty()
+                statusText.text = "Selected across " + resolved.ranges.size + " page(s)"
+            }
+        }
     }
 
     private fun requestSharperPage(pageIndex: Int, requestedDpi: Float) {
@@ -637,8 +871,58 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun saveDocumentSelection(active: PdfSession, selection: DocumentSelection) {
+        if (selection.ranges.isEmpty() || selection.selectedText.isBlank()) return
+        val noteInput = EditText(this).apply {
+            hint = "Optional note"
+            minLines = 1
+            setTextColor(Color.BLACK)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Save highlight across " + selection.ranges.size + " page(s)")
+            .setMessage(selection.selectedText)
+            .setView(noteInput)
+            .setNegativeButton("Cancel", null)
+            .setPositiveButton("Save") { _, _ ->
+                val note = noteInput.text.toString()
+                val groupId = java.util.UUID.randomUUID().toString()
+                val drafts = selection.ranges.map { range ->
+                    HighlightDraft(
+                        range.pageIndex, range.startGlyph, range.endGlyph,
+                        range.selectedText, Color.YELLOW, note,
+                        range.startChar, range.endChar, range.prefixText, range.suffixText,
+                        groupId
+                    )
+                }
+                val saved = try {
+                    store.addBatch(active.documentKey, drafts)
+                } catch (error: Exception) {
+                    statusText.text = "Could not save highlight: " +
+                        (error.message ?: error.javaClass.simpleName)
+                    emptyList()
+                }
+                if (saved.size == drafts.size) {
+                    active.storedHighlights.addAll(saved)
+                    active.resolvedHighlights.addAll(saved)
+                    for ((view, binding) in boundPageViews) {
+                        view.setHighlights(active.resolvedHighlights.filter {
+                            it.pageIndex == binding.pageIndex
+                        })
+                    }
+                    statusText.text = "Highlight saved across " + saved.size + " page(s)"
+                } else {
+                    statusText.text = "Could not save all page highlights"
+                }
+            }
+            .show()
+    }
+
     private fun saveHighlight() {
         val active = session ?: return
+        documentSelection?.let {
+            saveDocumentSelection(active, it)
+            return
+        }
         val range = selectedRange ?: return
         val pageIndex = selectedPageIndex
         val page = boundPageViews.entries.firstOrNull {
@@ -724,26 +1008,32 @@ class MainActivity : Activity() {
             Toast.makeText(this, "No saved highlights in this document", Toast.LENGTH_SHORT).show()
             return
         }
+        val groups = items.groupBy {
+            it.groupId.ifBlank { "single:" + it.id }
+        }.values.map { group ->
+            group.sortedWith(compareBy<Highlight> { it.pageIndex }.thenBy { it.startGlyph })
+        }
         val resolvedById = active.resolvedHighlights.associateBy { it.id }
-        val labels = items.map { item ->
-            val resolved = resolvedById[item.id]
-            val pageNumber = (resolved?.pageIndex ?: item.pageIndex) + 1
-            val note = if (item.note.isBlank()) "" else " — " + item.note
-            val pending = if (resolved == null) " • location will be searched" else ""
-            "Page " + pageNumber + ": " +
-                item.text.replace('\n', ' ').take(72) + note + pending
+        val labels = groups.map { group ->
+            val firstPage = group.minOf { it.pageIndex } + 1
+            val lastPage = group.maxOf { it.pageIndex } + 1
+            val pageLabel = if (firstPage == lastPage) "Page " + firstPage
+                else "Pages " + firstPage + "–" + lastPage
+            val excerpt = group.joinToString(" … ") { it.text.replace('\n', ' ').trim() }.take(72)
+            val note = group.firstOrNull { it.note.isNotBlank() }?.note?.let { " — " + it } ?: ""
+            val pending = if (group.any { resolvedById[it.id] == null }) {
+                " • some locations will be searched"
+            } else ""
+            pageLabel + ": " + excerpt + note + pending
         }.toTypedArray()
 
         AlertDialog.Builder(this)
-            .setTitle("Document highlights (" + items.size + ")")
+            .setTitle("Document highlights (" + groups.size + ")")
             .setItems(labels) { _, which ->
-                val selected = items[which]
-                val resolved = resolvedById[selected.id]
-                if (resolved == null) {
-                    locateHighlightAndNavigate(active, selected)
-                } else {
-                    navigateToResolvedHighlight(active, resolved)
-                }
+                val group = groups[which]
+                val resolved = group.mapNotNull { resolvedById[it.id] }.firstOrNull()
+                if (resolved == null) locateHighlightAndNavigate(active, group.first())
+                else navigateToResolvedHighlight(active, resolved)
             }
             .setNegativeButton("Close", null)
             .show()
@@ -788,6 +1078,7 @@ class MainActivity : Activity() {
     }
 
     private fun navigateToResolvedHighlight(active: PdfSession, resolved: Highlight) {
+        clearVisibleSelections()
         currentPage = resolved.pageIndex.coerceIn(0, active.pages.lastIndex)
         pendingHighlight = resolved
         pendingSearchHit = null
@@ -819,6 +1110,12 @@ class MainActivity : Activity() {
         io.shutdown()
         super.onDestroy()
     }
+
+    private data class SelectionTarget(
+        val pageIndex: Int,
+        val view: PdfPageView,
+        val glyphIndex: Int
+    )
 
     private data class BoundPage(
         val pageIndex: Int,

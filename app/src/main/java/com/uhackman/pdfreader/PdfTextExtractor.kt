@@ -110,12 +110,25 @@ class GlyphTextStripper : PDFTextStripper() {
      * page's glyph records are retained by this stripper.
      */
     fun forEachPage(document: PDDocument, consumer: (Int, PageText) -> Unit) {
+        forEachPage(document, 0, document.numberOfPages - 1, consumer)
+    }
+
+    /** Streams an inclusive page range while retaining only the current page's glyphs. */
+    fun forEachPage(
+        document: PDDocument,
+        startPageIndex: Int,
+        endPageIndex: Int,
+        consumer: (Int, PageText) -> Unit
+    ) {
+        require(startPageIndex >= 0 && endPageIndex >= startPageIndex &&
+            endPageIndex < document.numberOfPages
+        ) { "Invalid page range: $startPageIndex..$endPageIndex" }
         builders.clear()
         current = null
-        streamedPageIndex = -1
+        streamedPageIndex = startPageIndex - 1
         streamConsumer = consumer
-        setStartPage(1)
-        setEndPage(document.numberOfPages)
+        setStartPage(startPageIndex + 1)
+        setEndPage(endPageIndex + 1)
         try {
             getText(document)
         } finally {
