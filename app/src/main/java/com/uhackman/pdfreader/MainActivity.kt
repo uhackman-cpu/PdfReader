@@ -71,7 +71,7 @@ class MainActivity : Activity() {
         }
         searchInput = EditText(this).apply {
             hint = "Search document text"
-            singleLine = true
+            setSingleLine(true)
             setTextColor(Color.BLACK)
             textSize = 15f
         }
