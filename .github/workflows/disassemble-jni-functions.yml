@@ -1,0 +1,80 @@
+name: Disassemble ReadEra PDF JNI Functions
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  disassemble:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ARM64 binutils and LLVM objdump
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-aarch64-linux-gnu llvm
+      - name: Extract libreadera.so
+        shell: bash
+        run: |
+          mkdir -p native analysis
+          found=0
+          for apk in *.apk; do
+            if unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libreadera.so'; then
+              unzip -p "$apk" lib/arm64-v8a/libreadera.so > native/libreadera.so
+              found=1
+              break
+            fi
+          done
+          test "$found" -eq 1
+          file native/libreadera.so
+          sha256sum native/libreadera.so > analysis/libreadera.sha256
+      - name: List JNI export addresses and sizes
+        run: |
+          aarch64-linux-gnu-nm -D -S -C --defined-only native/libreadera.so > analysis/native_symbols.txt
+          grep -E 'Java_org_readera_jni_JniDoc_(bookmarkRect|pageText|pageRender|pageXPath|searchText|searchRect|pageOpen|pageGetSize)' analysis/native_symbols.txt > analysis/target_symbols.txt || true
+          aarch64-linux-gnu-readelf -Ws --wide native/libreadera.so > analysis/readelf_symbols.txt
+      - name: Disassemble relevant JNI methods
+        shell: bash
+        run: |
+          symbols=(
+            Java_org_readera_jni_JniDoc_bookmarkRectJni
+            Java_org_readera_jni_JniDoc_pageTextJni
+            Java_org_readera_jni_JniDoc_pageRenderJni
+            Java_org_readera_jni_JniDoc_pageXPathFromCoordsJni
+            Java_org_readera_jni_JniDoc_pageXPathFromRectJni
+            Java_org_readera_jni_JniDoc_pageXPathToIndexJni
+            Java_org_readera_jni_JniDoc_pageXPathFromIndexJni
+            Java_org_readera_jni_JniDoc_searchTextJni
+            Java_org_readera_jni_JniDoc_searchRectJni
+            Java_org_readera_jni_JniDoc_pageOpenJni
+            Java_org_readera_jni_JniDoc_pageGetSizeJni
+          )
+          : > analysis/target_disassembly.txt
+          for sym in "${symbols[@]}"; do
+            {
+              echo
+              echo "===== $sym ====="
+              llvm-objdump -d --demangle --no-show-raw-insn --disassemble-symbols="$sym" native/libreadera.so 2>&1 || true
+            } >> analysis/target_disassembly.txt
+          done
+      - name: Summarize call targets and native function sizes
+        run: |
+          {
+            echo '# ReadEra JNI function disassembly'
+            echo
+            echo 'The listed Java_org_readera_jni_JniDoc_* exports are the actual ARM64 JNI entry points in libreadera.so.'
+            echo
+            echo '## Library hash'
+            cat analysis/libreadera.sha256
+            echo
+            echo '## Relevant exported function addresses and sizes'
+            cat analysis/target_symbols.txt
+            echo
+            echo '## Function disassembly'
+            cat analysis/target_disassembly.txt
+          } > analysis/REPORT_JNI_FUNCTIONS.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: readera-jni-function-disassembly
+          path: analysis/
+          retention-days: 7
