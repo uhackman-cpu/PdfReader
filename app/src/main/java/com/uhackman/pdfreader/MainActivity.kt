@@ -471,15 +471,7 @@ class MainActivity : Activity() {
             bitmapCache.release(key)
             return
         }
-        if (dpi <= PdfPageView.BASE_RENDER_DPI * 1.01f) {
-            view.setPage(
-                pageData,
-                image,
-                active.resolvedHighlights.filter { it.pageIndex == pageIndex }
-            )
-        } else {
-            view.replaceBitmap(image)
-        }
+        view.replaceBitmap(image)
         boundPageViews[view] = oldBinding.copy(cacheKey = key)
         oldBinding.cacheKey?.let(bitmapCache::release)
         applyPendingPageState(pageIndex, view)
