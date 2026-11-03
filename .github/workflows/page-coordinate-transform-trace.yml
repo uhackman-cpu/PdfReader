@@ -21,55 +21,60 @@ jobs:
             -o /tmp/readera-static-analysis.zip
           mkdir -p /tmp/readera-static
           unzip -q /tmp/readera-static-analysis.zip -d /tmp/readera-static
-          echo "Artifact files:"
-          find /tmp/readera-static -type f | head -80
-      - name: Trace page size and coordinate normalization consumers
+      - name: Trace page size and coordinate normalization call sites
         run: |
           mkdir -p analysis
           python3 - <<'PY'
           from pathlib import Path
 
           root = Path("/tmp/readera-static")
-          targets = {
-              "AbstractC2468y.java": ["m11551a", "m11574x", "m11555e"],
-              "C2454k.java": ["mo11421c0", "m114"],
-              "AbstractC3568c.java": ["m15410g1", "m15390D0", "m15389B0"],
-              "JniDoc.java": ["pageGetSizeJni", "pageRenderJni", "pageTextJni"],
-              "ReadSurface.java": ["onDrawFrame", "onTouchEvent"],
+          target_names = {
+              "AbstractC2468y.java", "C2454k.java", "C0823q.java",
+              "C0825s.java", "C3684b.java", "AbstractC3568c.java",
+              "JniDoc.java", "ReadSurface.java"
           }
-          terms = ("pageGetSizeJni", "getRotation()", "cropBox", "cropBox.get",
-                   "getCropBox", "getMediaBox", "pageRect", "RectF", "m11551a")
-          found = {}
+          terms = (
+              "m11551a", "m5646C", "m5719p0", "m19131q",
+              "pageGetSizeJni", "getRotation", "setRotation",
+              "getCropBox", "getMediaBox", "cropBox", "pageWidth",
+              "pageHeight", "RectF", "pageRender"
+          )
+          relevant = {}
+          call_sites = {}
           for path in root.rglob("*.java"):
-              name = path.name
-              wanted = targets.get(name)
-              if name not in targets:
-                  continue
               try:
                   lines = path.read_text(errors="replace").splitlines()
               except Exception:
                   continue
-              selected = set()
-              for i, line in enumerate(lines):
-                  if any(term in line for term in terms) or (wanted and any(m in line for m in wanted)):
-                      for j in range(max(0, i-12), min(len(lines), i+22)):
+              name = path.name
+              hits = [i for i, line in enumerate(lines) if any(term in line for term in terms)]
+              if name in target_names and hits:
+                  selected = set()
+                  for i in hits:
+                      for j in range(max(0, i-10), min(len(lines), i+24)):
                           selected.add(j)
-              if selected:
-                  found[str(path.relative_to(root))] = (lines, sorted(selected))
-          report = []
-          report.append("# ReadEra page-coordinate transform trace")
-          report.append("")
-          report.append("This report reuses the existing successful JADX artifact; no APK re-analysis was repeated.")
-          report.append("")
-          report.append("## Artifact inventory")
-          files = sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
-          report.extend(f"- `{p}`" for p in files[:200])
-          report.append("")
-          report.append("## Matching Java source windows")
-          if not found:
-              report.append("No matching decompiled Java source files were found. This trace is inconclusive.")
-          for name, (lines, selected) in found.items():
-              report.extend([f"### `{name}`", "", "```java"])
+                  relevant[str(path.relative_to(root))] = (lines, sorted(selected))
+              if name not in target_names and hits:
+                  chosen = [i for i in hits if any(term in lines[i] for term in
+                            ("JniDoc.m19131q", "m19131q(", "m5646C()", "m5719p0("))]
+                  if chosen:
+                      selected = set()
+                      for i in chosen[:20]:
+                          for j in range(max(0, i-5), min(len(lines), i+12)):
+                              selected.add(j)
+                      call_sites[str(path.relative_to(root))] = (lines, sorted(selected))
+          report = [
+              "# ReadEra page-coordinate transform trace",
+              "",
+              "Reuses the completed JADX artifact; APK decompilation is not repeated.",
+              "",
+              "## Relevant decompiled class paths"
+          ]
+          for path in sorted(relevant):
+              report.append(f"- `{path}`")
+          report.extend(["", "## Page model, size and viewport source windows"])
+          for path, (lines, selected) in sorted(relevant.items()):
+              report.extend([f"### `{path}`", "", "```java"])
               previous = -2
               for idx in selected:
                   if idx > previous + 1:
@@ -77,15 +82,25 @@ jobs:
                   report.append(f"{idx+1}: {lines[idx]}")
                   previous = idx
               report.extend(["```", ""])
-          report.append("## Explicit questions")
+          report.extend(["## Cross-class call sites for page dimensions and viewport rectangles"])
+          for path, (lines, selected) in sorted(call_sites.items()):
+              report.extend([f"### `{path}`", "", "```java"])
+              previous = -2
+              for idx in selected:
+                  if idx > previous + 1:
+                      report.append("...")
+                  report.append(f"{idx+1}: {lines[idx]}")
+                  previous = idx
+              report.extend(["```", ""])
           report.extend([
-              "- Does the Java consumer normalize coordinates against the unrotated crop box or rotation-adjusted page dimensions?",
-              "- Where are page width/height and crop offsets obtained?",
-              "- Is bitmap orientation handled before or after text-rectangle normalization?",
-              "- Which exact coordinate transform is evidenced, and which cases remain unknown?"
+              "## Questions answered by this evidence",
+              "- Normalized rectangle to viewport transform",
+              "- Viewport to normalized touch-coordinate transform at base zoom and scaled zoom",
+              "- pageGetSizeJni result-array call sites and page dimension source",
+              "- Whether rotation/crop offsets are applied in Java or remain inside native page geometry"
           ])
           Path("analysis/readera-page-coordinate-transform.md").write_text("\n".join(report))
-          print("\n".join(report[:160]))
+          print("\n".join(report[:220]))
           PY
       - name: Publish coordinate trace into repository documentation
         env:
