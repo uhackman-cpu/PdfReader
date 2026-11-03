@@ -1,5 +1,6 @@
 package com.uhackman.pdfreader
 
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.min
 
@@ -18,6 +19,12 @@ object HighlightAnchorResolver {
         val range: IntRange,
         val contextScore: Int,
         val distance: Long
+    )
+
+    private data class NormalizedText(
+        val value: String,
+        val sourceStarts: IntArray,
+        val sourceEnds: IntArray
     )
 
     fun resolveInDocument(
@@ -47,7 +54,9 @@ object HighlightAnchorResolver {
     ): List<Candidate> {
         if (page.glyphs.isEmpty()) return emptyList()
 
-        val target = normalize(highlight.text)
+        val target = normalizeWithOffsets(highlight.text).value
+        if (target.isEmpty()) return emptyList()
+        val normalizedPage = normalizeWithOffsets(page.text)
         val ranges = linkedSetOf<IntRange>()
 
         val savedFirst = minOf(highlight.startGlyph, highlight.endGlyph)
@@ -60,10 +69,12 @@ object HighlightAnchorResolver {
         }
 
         var searchFrom = 0
-        while (searchFrom < page.text.length) {
-            val found = page.text.indexOf(highlight.text, searchFrom, ignoreCase = true)
+        while (searchFrom <= normalizedPage.value.length - target.length) {
+            val found = normalizedPage.value.indexOf(target, searchFrom)
             if (found < 0) break
-            page.glyphRangeForChars(found, found + highlight.text.length)?.let(ranges::add)
+            val startChar = normalizedPage.sourceStarts[found]
+            val endChar = normalizedPage.sourceEnds[found + target.length - 1]
+            page.glyphRangeForChars(startChar, endChar)?.let(ranges::add)
             searchFrom = found + 1
         }
 
@@ -78,8 +89,14 @@ object HighlightAnchorResolver {
 
             val before = page.text.substring(0, startChar)
             val after = page.text.substring(endChar)
-            val prefixScore = matchingSuffixLength(before, highlight.prefixText)
-            val suffixScore = matchingPrefixLength(after, highlight.suffixText)
+            val prefixScore = matchingSuffixLength(
+                normalize(before),
+                normalize(highlight.prefixText)
+            )
+            val suffixScore = matchingPrefixLength(
+                normalize(after),
+                normalize(highlight.suffixText)
+            )
             val distance = if (highlight.startChar >= 0) {
                 abs(startChar.toLong() - highlight.startChar.toLong())
             } else {
@@ -120,6 +137,53 @@ object HighlightAnchorResolver {
         return 0
     }
 
-    private fun normalize(value: String): String =
-        value.trim().replace(Regex("\\s+"), " ").lowercase()
+    private fun normalize(value: String): String = normalizeWithOffsets(value).value
+
+    /**
+     * Collapses all Unicode whitespace and case-folds text while retaining a
+     * mapping from every normalized UTF-16 unit to its original source span.
+     * That mapping lets a normalized match become the correct glyph range even
+     * when line wrapping or whitespace changes between document opens.
+     */
+    private fun normalizeWithOffsets(value: String): NormalizedText {
+        val normalized = StringBuilder()
+        val starts = ArrayList<Int>()
+        val ends = ArrayList<Int>()
+        var pendingWhitespaceStart = -1
+        var pendingWhitespaceEnd = -1
+        var sourceIndex = 0
+
+        while (sourceIndex < value.length) {
+            val codePoint = Character.codePointAt(value, sourceIndex)
+            val nextIndex = sourceIndex + Character.charCount(codePoint)
+            if (Character.isWhitespace(codePoint) || Character.isSpaceChar(codePoint)) {
+                if (normalized.isNotEmpty()) {
+                    if (pendingWhitespaceStart < 0) pendingWhitespaceStart = sourceIndex
+                    pendingWhitespaceEnd = nextIndex
+                }
+            } else {
+                if (pendingWhitespaceStart >= 0) {
+                    normalized.append(' ')
+                    starts.add(pendingWhitespaceStart)
+                    ends.add(pendingWhitespaceEnd)
+                    pendingWhitespaceStart = -1
+                    pendingWhitespaceEnd = -1
+                }
+
+                val folded = String(Character.toChars(codePoint)).lowercase(Locale.ROOT)
+                for (unit in folded) {
+                    normalized.append(unit)
+                    starts.add(sourceIndex)
+                    ends.add(nextIndex)
+                }
+            }
+            sourceIndex = nextIndex
+        }
+
+        return NormalizedText(
+            value = normalized.toString(),
+            sourceStarts = starts.toIntArray(),
+            sourceEnds = ends.toIntArray()
+        )
+    }
 }
