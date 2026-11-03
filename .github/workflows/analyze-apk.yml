@@ -1,0 +1,64 @@
+name: Analyze ReadEra APK
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: write
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Download JADX
+        run: |
+          curl -L --fail -o jadx.zip https://github.com/skylot/jadx/releases/download/v1.5.1/jadx-1.5.1.zip
+          unzip -q jadx.zip -d jadx
+          chmod +x jadx/bin/jadx
+      - name: Decode APK metadata and code
+        run: |
+          mkdir -p analysis
+          jadx/bin/jadx --deobf --show-bad-code -d analysis/java base.apk > analysis/jadx.log 2>&1 || true
+          find analysis/java -type f -name '*.java' | wc -l > analysis/java_file_count.txt
+          grep -RniE 'highlight|annotation|selection|textselect|pdfview|pdfium|mupdf|renderpage|gesture|zoom|tile|cache' analysis/java --include='*.java' | head -n 500 > analysis/relevant_code_hits.txt || true
+          find . -name '*.apk' -print0 | while IFS= read -r -d '' f; do
+            echo "===== $f ====="
+            unzip -l "$f" | grep -E 'lib/.*\.so$|classes[0-9]*\.dex$' || true
+          done > analysis/apk_components.txt
+          for f in *.apk; do
+            echo "===== $f ====="
+            unzip -p "$f" AndroidManifest.xml >/dev/null 2>&1 && echo "Manifest present"
+          done > analysis/manifest_presence.txt
+          grep -RhoE 'com\.[A-Za-z0-9_.]+' analysis/java --include='*.java' | sort -u | head -n 500 > analysis/package_names.txt || true
+          {
+            echo '# APK Static Analysis'
+            echo
+            echo '## APK files'
+            ls -lh *.apk
+            echo
+            echo '## Decompiled Java files'
+            cat analysis/java_file_count.txt
+            echo
+            echo '## Relevant code hits'
+            cat analysis/relevant_code_hits.txt
+            echo
+            echo '## Native libraries and DEX components'
+            cat analysis/apk_components.txt
+            echo
+            echo '## Package names'
+            cat analysis/package_names.txt
+            echo
+            echo '## JADX log tail'
+            tail -n 80 analysis/jadx.log
+          } > analysis/REPORT.md
+      - name: Upload analysis report
+        uses: actions/upload-artifact@v4
+        with:
+          name: readera-static-analysis
+          path: analysis/
+          retention-days: 7
