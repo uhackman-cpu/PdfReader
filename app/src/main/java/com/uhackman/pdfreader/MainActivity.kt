@@ -218,6 +218,7 @@ class MainActivity : Activity() {
                     } catch (_: Exception) {
                     }
                     releaseAllBoundPageViews()
+                    previous?.pageTextCache?.clear()
                     pageList.adapter = null
                     session = loaded
                     currentPage = 0
