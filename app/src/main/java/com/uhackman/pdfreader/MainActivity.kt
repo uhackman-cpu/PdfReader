@@ -37,6 +37,8 @@ class MainActivity : Activity() {
     private var pendingHighlight: Highlight? = null
     private var searchHits: List<SearchHit> = emptyList()
     private var searchHitIndex = -1
+    private var currentRenderDpi = PdfPageView.BASE_RENDER_DPI
+    private var requestedRenderDpi = PdfPageView.BASE_RENDER_DPI
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -92,6 +94,7 @@ class MainActivity : Activity() {
         root.addView(pageInfo)
 
         pageView = PdfPageView(this)
+        pageView.onResolutionRequested = { dpi -> requestSharperPage(dpi) }
         root.addView(pageView, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             0,
@@ -243,6 +246,8 @@ class MainActivity : Activity() {
         }
         currentPage = currentPage.coerceIn(0, active.pages.lastIndex)
         val pageIndex = currentPage
+        currentRenderDpi = PdfPageView.BASE_RENDER_DPI
+        requestedRenderDpi = PdfPageView.BASE_RENDER_DPI
         pageInfo.text = "Page " + (pageIndex + 1) + " / " + active.pages.size
         statusText.text = "Rendering page…"
         selectedRange = null
@@ -254,7 +259,7 @@ class MainActivity : Activity() {
             var failure: Exception? = null
             try {
                 rendered = synchronized(active.document) {
-                    active.renderer.renderImageWithDPI(pageIndex, 120f)
+                    active.renderer.renderImageWithDPI(pageIndex, PdfPageView.BASE_RENDER_DPI)
                 }
             } catch (error: Exception) {
                 failure = error
@@ -288,6 +293,48 @@ class MainActivity : Activity() {
                 } else {
                     glyphCount.toString() + " positioned text units • drag to select • pinch to zoom"
                 }
+            }
+        }
+    }
+
+
+    private fun requestSharperPage(requestedDpi: Float) {
+        val active = session ?: return
+        val pageIndex = currentPage
+        val targetDpi = requestedDpi.coerceIn(
+            PdfPageView.BASE_RENDER_DPI,
+            PdfPageView.MAX_RENDER_DPI
+        )
+        if (targetDpi <= requestedRenderDpi * 1.08f) return
+        requestedRenderDpi = targetDpi
+
+        io.execute {
+            var rendered: Bitmap? = null
+            var failure: Exception? = null
+            try {
+                rendered = synchronized(active.document) {
+                    active.renderer.renderImageWithDPI(pageIndex, targetDpi)
+                }
+            } catch (error: Exception) {
+                failure = error
+            }
+
+            runOnUiThread {
+                if (session !== active || currentPage != pageIndex) {
+                    rendered?.recycle()
+                    return@runOnUiThread
+                }
+                val image = rendered
+                if (image == null) {
+                    requestedRenderDpi = currentRenderDpi
+                    statusText.text = "Higher-resolution render failed: " +
+                        (failure?.message ?: "unknown error")
+                    return@runOnUiThread
+                }
+                currentRenderDpi = targetDpi
+                requestedRenderDpi = targetDpi
+                pageView.replaceBitmap(image)
+                statusText.text = "Zoom detail refreshed at " + targetDpi.toInt() + " DPI"
             }
         }
     }

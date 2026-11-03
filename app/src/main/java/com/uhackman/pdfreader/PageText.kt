@@ -35,3 +35,185 @@ data class SearchHit(
     val startChar: Int,
     val endChar: Int
 )
+
+
+/**
+ * Expands a touched text unit to a Unicode-aware word range.
+ * Apostrophes and joiners are kept only when they connect word characters.
+ */
+object TextSelection {
+    fun wordRangeForGlyph(page: PageText, glyphIndex: Int): IntRange? {
+        val glyph = page.glyphs.getOrNull(glyphIndex) ?: return null
+        val text = page.text
+        val start = glyph.startChar.coerceIn(0, text.length)
+        val end = glyph.endChar.coerceIn(start, text.length)
+        if (start >= end) return null
+
+        val firstCodePoint = Character.codePointAt(text, start)
+        if (!isWordCodePoint(firstCodePoint) &&
+            !isWordConnector(text, start, firstCodePoint)
+        ) {
+            return page.glyphRangeForChars(start, end)
+        }
+
+        var wordStart = start
+        while (wordStart > 0) {
+            val previousStart = Character.offsetByCodePoints(text, wordStart, -1)
+            val previous = Character.codePointAt(text, previousStart)
+            if (isWordCodePoint(previous) || isWordConnector(text, previousStart, previous)) {
+                wordStart = previousStart
+            } else {
+                break
+            }
+        }
+
+        var wordEnd = end
+        while (wordEnd < text.length) {
+            val next = Character.codePointAt(text, wordEnd)
+            if (isWordCodePoint(next) || isWordConnector(text, wordEnd, next)) {
+                wordEnd += Character.charCount(next)
+            } else {
+                break
+            }
+        }
+
+        return page.glyphRangeForChars(wordStart, wordEnd)
+    }
+
+    private fun isWordCodePoint(codePoint: Int): Boolean {
+        val type = Character.getType(codePoint)
+        return Character.isLetterOrDigit(codePoint) ||
+            type == Character.NON_SPACING_MARK.toInt() ||
+            type == Character.COMBINING_SPACING_MARK.toInt() ||
+            type == Character.ENCLOSING_MARK.toInt() ||
+            type == Character.CONNECTOR_PUNCTUATION.toInt()
+    }
+
+    private fun isWordConnector(text: String, index: Int, codePoint: Int): Boolean {
+        val apostrophe = codePoint == 0x27 || codePoint == 0x2019 || codePoint == 0x02BC
+        val joiner = codePoint == 0x200C || codePoint == 0x200D
+        if (!apostrophe && !joiner || index <= 0) return false
+
+        val after = index + Character.charCount(codePoint)
+        if (after >= text.length) return false
+        val before = Character.offsetByCodePoints(text, index, -1)
+        return isWordCodePoint(Character.codePointAt(text, before)) &&
+            isWordCodePoint(Character.codePointAt(text, after))
+    }
+}
+
+/**
+ * Uniform-grid nearest-glyph index for touch hit-testing.
+ *
+ * The expanding-ring search uses a conservative lower bound based on the
+ * largest glyph dimensions, so it returns the same nearest glyph as a full
+ * scan without visiting every glyph on every MotionEvent.
+ */
+class GlyphSpatialIndex(
+    private val glyphs: List<Glyph>,
+    private val columns: Int = 64,
+    private val rows: Int = 64
+) {
+    private val cells = arrayOfNulls<MutableList<Int>>(columns * rows)
+    private var maxGlyphWidth = 0.006f
+    private var maxGlyphHeight = 0.012f
+
+    init {
+        require(columns > 0 && rows > 0)
+        glyphs.forEachIndexed { index, glyph ->
+            val width = (glyph.right - glyph.left).takeIf { it.isFinite() } ?: 0.006f
+            val height = (glyph.bottom - glyph.top).takeIf { it.isFinite() } ?: 0.012f
+            maxGlyphWidth = maxOf(maxGlyphWidth, width, 0.006f)
+            maxGlyphHeight = maxOf(maxGlyphHeight, height, 0.012f)
+
+            val centerX = ((glyph.left + glyph.right) / 2f)
+                .takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: return@forEachIndexed
+            val centerY = ((glyph.top + glyph.bottom) / 2f)
+                .takeIf { it.isFinite() }?.coerceIn(0f, 1f) ?: return@forEachIndexed
+            val column = (centerX * columns).toInt().coerceIn(0, columns - 1)
+            val row = (centerY * rows).toInt().coerceIn(0, rows - 1)
+            val cellIndex = row * columns + column
+            val cell = cells[cellIndex] ?: mutableListOf<Int>().also {
+                cells[cellIndex] = it
+            }
+            cell.add(index)
+        }
+    }
+
+    fun nearestGlyphIndex(x: Float, y: Float, maxScore: Float = 36f): Int {
+        if (glyphs.isEmpty() || !x.isFinite() || !y.isFinite()) return -1
+        if (x < -0.02f || x > 1.02f || y < -0.02f || y > 1.02f) return -1
+
+        val centerColumn = (x.coerceIn(0f, 1f) * columns).toInt().coerceIn(0, columns - 1)
+        val centerRow = (y.coerceIn(0f, 1f) * rows).toInt().coerceIn(0, rows - 1)
+        var bestIndex = -1
+        var bestScore = Float.POSITIVE_INFINITY
+        var ring = 0
+
+        while (ring < maxOf(columns, rows)) {
+            val left = maxOf(0, centerColumn - ring)
+            val right = minOf(columns - 1, centerColumn + ring)
+            val top = maxOf(0, centerRow - ring)
+            val bottom = minOf(rows - 1, centerRow + ring)
+
+            for (row in top..bottom) {
+                for (column in left..right) {
+                    if (ring != 0 && row != top && row != bottom &&
+                        column != left && column != right
+                    ) continue
+
+                    val cell = cells[row * columns + column] ?: continue
+                    for (index in cell) {
+                        val glyph = glyphs[index]
+                        val width = maxOf(glyph.right - glyph.left, 0.006f)
+                        val height = maxOf(glyph.bottom - glyph.top, 0.012f)
+                        val dx = (x - (glyph.left + glyph.right) / 2f) / width
+                        val dy = (y - (glyph.top + glyph.bottom) / 2f) / height
+                        val score = dx * dx + dy * dy
+                        if (score < bestScore ||
+                            (score == bestScore && (bestIndex < 0 || index < bestIndex))
+                        ) {
+                            bestScore = score
+                            bestIndex = index
+                        }
+                    }
+                }
+            }
+
+            val fullGridVisited = left == 0 && right == columns - 1 &&
+                top == 0 && bottom == rows - 1
+            if (fullGridVisited) break
+
+            val minDx = minDistanceToUnvisitedCells(x, centerColumn, ring, columns)
+            val minDy = minDistanceToUnvisitedCells(y, centerRow, ring, rows)
+            val lowerBound = minOf(
+                square(minDx / maxGlyphWidth),
+                square(minDy / maxGlyphHeight)
+            )
+            if (lowerBound > minOf(bestScore, maxScore)) break
+            ring++
+        }
+
+        return if (bestIndex >= 0 && bestScore <= maxScore) bestIndex else -1
+    }
+
+    private fun minDistanceToUnvisitedCells(
+        coordinate: Float,
+        centerCell: Int,
+        radius: Int,
+        count: Int
+    ): Float {
+        val firstVisited = maxOf(0, centerCell - radius)
+        val lastVisited = minOf(count - 1, centerCell + radius)
+        var distance = Float.POSITIVE_INFINITY
+        if (firstVisited > 0) {
+            distance = minOf(distance, maxOf(0f, coordinate - firstVisited.toFloat() / count))
+        }
+        if (lastVisited < count - 1) {
+            distance = minOf(distance, maxOf(0f, (lastVisited + 1).toFloat() / count - coordinate))
+        }
+        return distance
+    }
+
+    private fun square(value: Float): Float = value * value
+}
