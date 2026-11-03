@@ -1,0 +1,97 @@
+name: Trace ReadEra Page Coordinate Transform
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  coordinate-trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download the existing JADX analysis artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsSL \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/13240431624/zip" \
+            -o /tmp/readera-static-analysis.zip
+          mkdir -p /tmp/readera-static
+          unzip -q /tmp/readera-static-analysis.zip -d /tmp/readera-static
+          echo "Artifact files:"
+          find /tmp/readera-static -type f | head -80
+      - name: Trace page size and coordinate normalization consumers
+        run: |
+          mkdir -p analysis
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          root = Path("/tmp/readera-static")
+          targets = {
+              "AbstractC2468y.java": ["m11551a", "m11574x", "m11555e"],
+              "C2454k.java": ["mo11421c0", "m114"],
+              "AbstractC3568c.java": ["m15410g1", "m15390D0", "m15389B0"],
+              "JniDoc.java": ["pageGetSizeJni", "pageRenderJni", "pageTextJni"],
+              "ReadSurface.java": ["onDrawFrame", "onTouchEvent"],
+          }
+          terms = ("pageGetSizeJni", "getRotation()", "cropBox", "cropBox.get",
+                   "getCropBox", "getMediaBox", "pageRect", "RectF", "m11551a")
+          found = {}
+          for path in root.rglob("*.java"):
+              name = path.name
+              wanted = targets.get(name)
+              if not wanted and name not in ("AbstractC2468y.java", "C2454k.java",
+                                              "AbstractC3568c.java", "JniDoc.java",
+                                              "ReadSurface.java"):
+                  continue
+              try:
+                  lines = path.read_text(errors="replace").splitlines()
+              except Exception:
+                  continue
+              selected = set()
+              for i, line in enumerate(lines):
+                  if any(term in line for term in terms) or (wanted and any(m in line for m in wanted)):
+                      for j in range(max(0, i-12), min(len(lines), i+22)):
+                          selected.add(j)
+              if selected:
+                  found[str(path.relative_to(root))] = (lines, sorted(selected))
+          report = []
+          report.append("# ReadEra page-coordinate transform trace")
+          report.append("")
+          report.append("This report reuses the already completed JADX artifact; no APK re-analysis was repeated.")
+          report.append("")
+          report.append("## Artifact inventory")
+          files = sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
+          report.extend(f"- `{p}`" for p in files[:200])
+          report.append("")
+          report.append("## Matching Java source windows")
+          if not found:
+              report.append("No matching decompiled Java source files were found. Inspect the artifact layout above; this trace is inconclusive.")
+          for name, (lines, selected) in found.items():
+              report.extend([f"### `{name}`", "", "```java"])
+              previous = -2
+              for idx in selected:
+                  if idx > previous + 1:
+                      report.append("...")
+                  report.append(f"{idx+1}: {lines[idx]}")
+                  previous = idx
+              report.extend(["```", ""])
+          report.append("## Explicit questions")
+          report.extend([
+              "- Does the Java consumer normalize coordinates against the unrotated crop box or the rotation-adjusted page dimensions?",
+              "- Where are page width/height and crop offsets obtained?",
+              "- Is the page bitmap's displayed orientation handled before or after text-rectangle normalization?",
+              "- Which exact coordinate transform is evidenced, and which cases remain unknown?"
+          ])
+          Path("analysis/readera-page-coordinate-transform.md").write_text("\n".join(report))
+          print("\n".join(report[:120]))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: readera-page-coordinate-transform
+          path: analysis/readera-page-coordinate-transform.md
+          retention-days: 14
