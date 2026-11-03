@@ -12,6 +12,7 @@ import android.view.GestureDetector
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
 import android.view.View
+import kotlin.math.max
 import kotlin.math.min
 
 class PdfPageView @JvmOverloads constructor(
