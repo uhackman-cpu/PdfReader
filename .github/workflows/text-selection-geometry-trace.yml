@@ -1,0 +1,42 @@
+name: Trace ReadEra Text Selection Geometry
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  selection-trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native tools
+        run: sudo apt-get update && sudo apt-get install -y binutils-aarch64-linux-gnu llvm
+      - name: Extract native library
+        run: |
+          mkdir -p native analysis
+          for apk in *.apk; do
+            if unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libreadera.so'; then
+              unzip -p "$apk" lib/arm64-v8a/libreadera.so > native/libreadera.so
+              break
+            fi
+          done
+          test -s native/libreadera.so
+          aarch64-linux-gnu-readelf -Ws native/libreadera.so > analysis/native_symbols.txt
+      - name: Disassemble text and geometry JNI functions
+        run: |
+          {
+            echo '# pageTextJni at 0x72878'
+            llvm-objdump -d --demangle --no-show-raw-insn --start-address=0x72800 --stop-address=0x72c80 native/libreadera.so
+            echo '# pageXPathFromRectJni at 0x74110'
+            llvm-objdump -d --demangle --no-show-raw-insn --start-address=0x74080 --stop-address=0x74480 native/libreadera.so
+            echo '# pageXPathFromCoordsJni at 0x77a44'
+            llvm-objdump -d --demangle --no-show-raw-insn --start-address=0x77900 --stop-address=0x77d80 native/libreadera.so
+            echo '# searchTextJni and searchRectJni'
+            llvm-objdump -d --demangle --no-show-raw-insn --start-address=0x74d80 --stop-address=0x75380 native/libreadera.so
+          } > analysis/text_geometry_jni.txt
+          strings -a -t x native/libreadera.so | grep -iE 'xpath|text|word|glyph|char|rect|quad|page|search|font|line|select|bound|clip|utf|unicode' > analysis/text_geometry_strings.txt || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: readera-text-selection-geometry-trace
+          path: analysis/
+          retention-days: 7
