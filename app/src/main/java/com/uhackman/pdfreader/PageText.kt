@@ -217,3 +217,27 @@ class GlyphSpatialIndex(
 
     private fun square(value: Float): Float = value * value
 }
+
+
+/**
+ * Bounds PDF raster dimensions by page area so zoom-quality upgrades do not
+ * allocate unbounded bitmaps for posters, maps, or unusually large sheets.
+ */
+object RenderDpiPolicy {
+    const val DEFAULT_DPI = 120f
+    const val MAX_BITMAP_PIXELS = 12_000_000.0
+    const val MIN_DPI = 48f
+
+    fun cap(widthPoints: Float, heightPoints: Float, requestedDpi: Float): Float {
+        val desired = requestedDpi.takeIf { it.isFinite() && it > 0f } ?: DEFAULT_DPI
+        if (!widthPoints.isFinite() || !heightPoints.isFinite() ||
+            widthPoints <= 0f || heightPoints <= 0f
+        ) return desired
+
+        val areaPoints = widthPoints.toDouble() * heightPoints.toDouble()
+        val maxDpi = kotlin.math.sqrt(
+            MAX_BITMAP_PIXELS * 72.0 * 72.0 / areaPoints
+        ).toFloat()
+        return minOf(desired, maxDpi.coerceAtLeast(MIN_DPI))
+    }
+}

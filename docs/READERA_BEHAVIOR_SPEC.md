@@ -88,15 +88,16 @@ The saved annotation list is held on the document model (C5139l.f20213b0). The a
 
 ## Independent implementation decisions
 
-- Use positioned PDF text, not a bitmap-only page model.
-- Keep each glyph's normalized rectangle and text offsets together.
-- Select by finger drag over positioned text; paint the selected glyph rectangles.
-- Search extracted text and map match character ranges back to glyph rectangles.
-- Persist document-scoped page/glyph ranges, selected text, color, and optional note in SQLite.
-- Restore highlights by re-extracting the same document and applying saved glyph ranges.
-- Render pages independently and apply focus-aware pinch zoom in the view layer.
+- Use positioned PDF text and glyph rectangles; the page bitmap is only the visual raster, not the text model.
+- Long-press starts Unicode-aware word selection; dragging extends the word range, and the two endpoint handles refine the selection at text-unit/character level.
+- A 64×64 uniform spatial grid with an expanding-ring nearest-neighbour search keeps touch hit-testing from scanning every glyph on each move.
+- Search extracted document text and map character matches back to positioned glyph rectangles.
+- Persist document-scoped selections, selected text, color, optional note, and surrounding prefix/suffix context in SQLite.
+- Restore saved highlights by resolving the selected phrase against fresh page text and ranking repeated occurrences with the saved context; old glyph indexes remain a fast hint.
+- Render pages independently and apply focus-aware pinch zoom and pan.
+- After a pinch gesture, request a sharper page raster (up to 288 DPI), capped by a 12-megapixel page-area budget; replace the bitmap without resetting zoom, pan, selection, or overlays.
 
-The initial app intentionally uses page-at-a-time navigation while this end-to-end flow is validated. Continuous scrolling, robust re-anchoring after document edits, OCR for image-only PDFs, and richer selection handles remain future work.
+The independent app still uses page-at-a-time navigation. Continuous vertical scrolling, cross-page selection, OCR for scanned PDFs, and verified geometry handling for rotated/cropped pages remain future work. Physical-device touch and rendering validation is still outstanding.
 
 
 ## 8. Persisted selection-anchor lifecycle — additional Java-side evidence

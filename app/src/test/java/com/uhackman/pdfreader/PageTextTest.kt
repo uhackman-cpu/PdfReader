@@ -2,6 +2,7 @@ package com.uhackman.pdfreader
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PageTextTest {
@@ -144,6 +145,30 @@ class PageTextTest {
             }
         }
         return if (bestIndex >= 0 && bestScore <= 36f) bestIndex else -1
+    }
+
+
+
+    @Test
+    fun renderDpiPolicyKeepsNormalPagesSharpAndCapsLargeSheets() {
+        assertEquals(288f, RenderDpiPolicy.cap(595f, 842f, 288f), 0.01f)
+
+        val largePageDpi = RenderDpiPolicy.cap(2384f, 3370f, 288f)
+        val renderedPixels = (2384.0 / 72.0 * largePageDpi) *
+            (3370.0 / 72.0 * largePageDpi)
+
+        assertTrue(largePageDpi < 120f)
+        assertTrue(renderedPixels <= RenderDpiPolicy.MAX_BITMAP_PIXELS + 10.0)
+    }
+
+    @Test
+    fun renderDpiPolicyFallsBackForInvalidPageDimensions() {
+        assertEquals(180f, RenderDpiPolicy.cap(Float.NaN, 842f, 180f), 0.01f)
+        assertEquals(
+            RenderDpiPolicy.DEFAULT_DPI,
+            RenderDpiPolicy.cap(595f, 842f, Float.NaN),
+            0.01f
+        )
     }
 
 }

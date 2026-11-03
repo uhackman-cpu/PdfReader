@@ -102,7 +102,7 @@ class MainActivity : Activity() {
         ))
 
         statusText = TextView(this).apply {
-            text = "Open a text-based PDF. Drag across text to select it."
+            text = "Open a text-based PDF. Long-press a word or drag across text to select it."
             setTextColor(Color.DKGRAY)
             textSize = 12f
             setPadding(4, 5, 4, 5)
@@ -246,8 +246,14 @@ class MainActivity : Activity() {
         }
         currentPage = currentPage.coerceIn(0, active.pages.lastIndex)
         val pageIndex = currentPage
-        currentRenderDpi = PdfPageView.BASE_RENDER_DPI
-        requestedRenderDpi = PdfPageView.BASE_RENDER_DPI
+        val pageData = active.pages[pageIndex]
+        val pageDpi = RenderDpiPolicy.cap(
+            pageData.widthPoints,
+            pageData.heightPoints,
+            PdfPageView.BASE_RENDER_DPI
+        )
+        currentRenderDpi = pageDpi
+        requestedRenderDpi = pageDpi
         pageInfo.text = "Page " + (pageIndex + 1) + " / " + active.pages.size
         statusText.text = "Rendering page…"
         selectedRange = null
@@ -259,7 +265,7 @@ class MainActivity : Activity() {
             var failure: Exception? = null
             try {
                 rendered = synchronized(active.document) {
-                    active.renderer.renderImageWithDPI(pageIndex, PdfPageView.BASE_RENDER_DPI)
+                    active.renderer.renderImageWithDPI(pageIndex, pageDpi)
                 }
             } catch (error: Exception) {
                 failure = error
@@ -291,7 +297,7 @@ class MainActivity : Activity() {
                 statusText.text = if (glyphCount == 0) {
                     "No selectable text layer on this page. Scanned PDFs need OCR."
                 } else {
-                    glyphCount.toString() + " positioned text units • drag to select • pinch to zoom"
+                    glyphCount.toString() + " positioned text units • long-press word / drag select • pinch to zoom"
                 }
             }
         }
@@ -301,9 +307,15 @@ class MainActivity : Activity() {
     private fun requestSharperPage(requestedDpi: Float) {
         val active = session ?: return
         val pageIndex = currentPage
-        val targetDpi = requestedDpi.coerceIn(
+        val pageData = active.pages.getOrNull(pageIndex) ?: return
+        val desiredDpi = requestedDpi.coerceIn(
             PdfPageView.BASE_RENDER_DPI,
             PdfPageView.MAX_RENDER_DPI
+        )
+        val targetDpi = RenderDpiPolicy.cap(
+            pageData.widthPoints,
+            pageData.heightPoints,
+            desiredDpi
         )
         if (targetDpi <= requestedRenderDpi * 1.08f) return
         requestedRenderDpi = targetDpi

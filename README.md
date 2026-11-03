@@ -12,7 +12,7 @@ A native Android PDF reader built independently from documented PDF-reading beha
 - Saves highlights and optional notes in local SQLite, keyed to the selected document URI.
 - Restores saved highlights when a document is reopened.
 - Shows a document-wide highlights list; selecting an item jumps to its page.
-- Supports focus-aware pinch zoom and panning; after a zoom gesture it requests a sharper page render (up to 288 DPI) without losing selection overlays.
+- Supports focus-aware pinch zoom and panning; after a zoom gesture it requests a sharper page render (up to 288 DPI, capped by a 12-megapixel page budget) without losing selection overlays.
 - Uses previous/next page navigation for this initial milestone. Continuous scrolling and richer selection handles are follow-up work.
 
 Scanned PDFs containing only page images have no text layer in this milestone; OCR is not yet included.
