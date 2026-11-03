@@ -138,6 +138,41 @@ class PageTextTest {
         )
     }
 
+    @Test
+    fun normalizedPageTransformRoundTripsThroughZoomAndPan() {
+        val screen = PageCoordinateTransform.toScreen(
+            normalizedX = 0.25f,
+            normalizedY = 0.75f,
+            left = 10f,
+            top = 20f,
+            right = 210f,
+            bottom = 420f,
+            zoom = 2f,
+            offsetX = 3f,
+            offsetY = -5f
+        )
+        assertEquals(123f, screen.x, 0.001f)
+        assertEquals(635f, screen.y, 0.001f)
+
+        val normalized = PageCoordinateTransform.toNormalized(
+            screen.x, screen.y,
+            10f, 20f, 210f, 420f,
+            2f, 3f, -5f
+        )
+
+        assertEquals(0.25f, normalized?.x ?: -1f, 0.0001f)
+        assertEquals(0.75f, normalized?.y ?: -1f, 0.0001f)
+    }
+
+    @Test
+    fun displayedPageDimensionsMatchPdfRendererRotationRules() {
+        assertEquals(CoordinatePoint(600f, 800f), displayedPageDimensions(600f, 800f, 0))
+        assertEquals(CoordinatePoint(800f, 600f), displayedPageDimensions(600f, 800f, 90))
+        assertEquals(CoordinatePoint(600f, 800f), displayedPageDimensions(600f, 800f, 180))
+        assertEquals(CoordinatePoint(800f, 600f), displayedPageDimensions(600f, 800f, 270))
+        assertEquals(CoordinatePoint(600f, 800f), displayedPageDimensions(600f, 800f, 450))
+    }
+
     private fun pageFromText(text: String): PageText {
         val glyphs = mutableListOf<Glyph>()
         var charIndex = 0
