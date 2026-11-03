@@ -187,11 +187,24 @@ class MainActivity : Activity() {
                 document = loadedDocument
                 val stripper = GlyphTextStripper()
                 val pages = stripper.extract(loadedDocument)
+                val documentKey = uri.toString()
+                val storedHighlights = store.list(documentKey).toMutableList()
+                val resolvedHighlights = storedHighlights.mapNotNull { saved ->
+                    val anchor = HighlightAnchorResolver.resolveInDocument(pages, saved)
+                        ?: return@mapNotNull null
+                    saved.copy(
+                        pageIndex = anchor.pageIndex,
+                        startGlyph = anchor.glyphRange.first,
+                        endGlyph = anchor.glyphRange.last
+                    )
+                }.toMutableList()
                 val loaded = PdfSession(
                     document = loadedDocument,
                     renderer = PDFRenderer(loadedDocument),
                     pages = pages,
-                    documentKey = uri.toString()
+                    documentKey = documentKey,
+                    storedHighlights = storedHighlights,
+                    resolvedHighlights = resolvedHighlights
                 )
                 document = null
                 runOnUiThread {
@@ -246,7 +259,7 @@ class MainActivity : Activity() {
             } catch (error: Exception) {
                 failure = error
             }
-            val pageHighlights = store.list(active.documentKey).filter { it.pageIndex == pageIndex }
+            val pageHighlights = active.resolvedHighlights.filter { it.pageIndex == pageIndex }
             runOnUiThread {
                 if (session !== active || currentPage != pageIndex) {
                     rendered?.recycle()
@@ -364,41 +377,91 @@ class MainActivity : Activity() {
             .setView(noteInput)
             .setNegativeButton("Cancel", null)
             .setPositiveButton("Save") { _, _ ->
-                store.add(
+                val firstGlyph = page.glyphs[range.first]
+                val lastGlyph = page.glyphs[range.last]
+                val startChar = firstGlyph.startChar
+                val endChar = lastGlyph.endChar
+                val prefixText = page.text.substring(max(0, startChar - ANCHOR_CONTEXT_LENGTH), startChar)
+                val suffixText = page.text.substring(
+                    endChar,
+                    minOf(page.text.length, endChar + ANCHOR_CONTEXT_LENGTH)
+                )
+                val createdAt = System.currentTimeMillis()
+                val id = store.add(
                     documentKey = active.documentKey,
                     pageIndex = currentPage,
                     startGlyph = range.first,
                     endGlyph = range.last,
                     text = selectedText,
                     color = Color.YELLOW,
-                    note = noteInput.text.toString()
+                    note = noteInput.text.toString(),
+                    startChar = startChar,
+                    endChar = endChar,
+                    prefixText = prefixText,
+                    suffixText = suffixText
                 )
-                val pageHighlights = store.list(active.documentKey).filter { it.pageIndex == currentPage }
-                pageView.setHighlights(pageHighlights)
-                statusText.text = "Highlight saved"
+                if (id >= 0L) {
+                    val saved = Highlight(
+                        id = id,
+                        pageIndex = currentPage,
+                        startGlyph = range.first,
+                        endGlyph = range.last,
+                        text = selectedText,
+                        color = Color.YELLOW,
+                        note = noteInput.text.toString(),
+                        createdAt = createdAt,
+                        startChar = startChar,
+                        endChar = endChar,
+                        prefixText = prefixText,
+                        suffixText = suffixText
+                    )
+                    active.storedHighlights.add(saved)
+                    active.resolvedHighlights.add(saved)
+                    pageView.setHighlights(
+                        active.resolvedHighlights.filter { it.pageIndex == currentPage }
+                    )
+                    statusText.text = "Highlight saved"
+                } else {
+                    statusText.text = "Could not save highlight"
+                }
             }
             .show()
     }
 
     private fun showHighlights() {
         val active = session ?: return
-        val items = store.list(active.documentKey)
+        val items = active.storedHighlights.sortedWith(
+            compareBy<Highlight> { it.pageIndex }.thenBy { it.startGlyph }
+        )
         if (items.isEmpty()) {
             Toast.makeText(this, "No saved highlights in this document", Toast.LENGTH_SHORT).show()
             return
         }
+        val resolvedById = active.resolvedHighlights.associateBy { it.id }
         val labels = items.map { item ->
+            val resolved = resolvedById[item.id]
+            val pageNumber = (resolved?.pageIndex ?: item.pageIndex) + 1
             val note = if (item.note.isBlank()) "" else " — " + item.note
-            "Page " + (item.pageIndex + 1) + ": " +
-                item.text.replace('\n', ' ').take(72) + note
+            val missing = if (resolved == null) " • location not found" else ""
+            "Page " + pageNumber + ": " +
+                item.text.replace('\n', ' ').take(72) + note + missing
         }.toTypedArray()
 
         AlertDialog.Builder(this)
             .setTitle("Document highlights (" + items.size + ")")
             .setItems(labels) { _, which ->
                 val selected = items[which]
-                currentPage = selected.pageIndex.coerceIn(0, active.pages.lastIndex)
-                pendingHighlight = selected
+                val resolved = resolvedById[selected.id]
+                if (resolved == null) {
+                    Toast.makeText(
+                        this,
+                        "The saved text could not be located in this PDF.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    return@setItems
+                }
+                currentPage = resolved.pageIndex.coerceIn(0, active.pages.lastIndex)
+                pendingHighlight = resolved
                 pendingSearchHit = null
                 renderCurrentPage()
             }
@@ -425,10 +488,13 @@ class MainActivity : Activity() {
         val document: PDDocument,
         val renderer: PDFRenderer,
         val pages: List<PageText>,
-        val documentKey: String
+        val documentKey: String,
+        val storedHighlights: MutableList<Highlight>,
+        val resolvedHighlights: MutableList<Highlight>
     )
 
     companion object {
         private const val REQUEST_OPEN_PDF = 7104
+        private const val ANCHOR_CONTEXT_LENGTH = 48
     }
 }
