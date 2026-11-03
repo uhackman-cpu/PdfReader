@@ -614,7 +614,7 @@ class MainActivity : Activity() {
             val note = if (item.note.isBlank()) "" else " — " + item.note
             val missing = if (resolved == null) " • location not found" else ""
             "Page " + pageNumber + ": " +
-                item.text.replace('\\n', ' ').take(72) + note + missing
+                item.text.replace('\n', ' ').take(72) + note + missing
         }.toTypedArray()
 
         AlertDialog.Builder(this)
