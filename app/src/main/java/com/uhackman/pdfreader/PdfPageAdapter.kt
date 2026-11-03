@@ -32,6 +32,7 @@ class PdfPageAdapter(
 
     override fun onBindViewHolder(holder: PageHolder, position: Int) {
         holder.boundPageIndex = position
+        holder.pageView.documentPageIndex = position
         val density = holder.pageView.resources.displayMetrics.density
         val measuredWidth = holder.pageView.parent
             ?.let { it as? RecyclerView }
@@ -72,6 +73,7 @@ class PdfPageAdapter(
         holder.pageView.onSelectionChanged = null
         holder.pageView.onDocumentSelectionGesture = null
         holder.pageView.onResolutionRequested = null
+        holder.pageView.documentPageIndex = RecyclerView.NO_POSITION
         holder.boundPageIndex = RecyclerView.NO_POSITION
         super.onViewRecycled(holder)
     }

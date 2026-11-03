@@ -32,8 +32,8 @@ class DocumentSelectionTest {
             SelectionEndpoint(0, 2, 3), SelectionEndpoint(0, 6, 7),
             mapOf(0 to page("abcdefghij")), 1
         )
-        assertEquals("bcdefgh", result?.selectedText)
-        assertEquals(1..7, result?.ranges?.single()?.let { it.startGlyph..it.endGlyph })
+        assertEquals("cdefgh", result?.selectedText)
+        assertEquals(2..7, result?.ranges?.single()?.let { it.startGlyph..it.endGlyph })
     }
 
     @Test
@@ -54,7 +54,7 @@ class DocumentSelectionTest {
         builder.accept(0, page("first"))
         builder.accept(1, page(""))
         builder.accept(2, page("end"))
-        assertEquals("f\nend", builder.result()?.selectedText)
+        assertEquals("first\nend", builder.result()?.selectedText)
         assertEquals(listOf(0, 2), builder.result()?.ranges?.map { it.pageIndex })
     }
 

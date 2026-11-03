@@ -27,6 +27,7 @@ data class DocumentSelection(
 )
 
 data class SelectionGestureEvent(
+    val anchorPageIndex: Int,
     val anchorStartGlyph: Int,
     val anchorEndGlyph: Int,
     val rawX: Float,
@@ -67,6 +68,12 @@ object DocumentSelectionBuilder {
         }
         return builder.result()
     }
+
+    fun firstEndpoint(anchor: SelectionEndpoint, focus: SelectionEndpoint): SelectionEndpoint =
+        earlier(anchor, focus)
+
+    fun lastEndpoint(anchor: SelectionEndpoint, focus: SelectionEndpoint): SelectionEndpoint =
+        later(anchor, focus)
 
     fun streaming(anchor: SelectionEndpoint, focus: SelectionEndpoint, pageCount: Int) =
         StreamingBuilder(anchor, focus, pageCount)

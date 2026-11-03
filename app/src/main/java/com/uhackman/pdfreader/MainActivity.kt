@@ -262,8 +262,8 @@ class MainActivity : Activity() {
                                 highlightButton.isEnabled = selectedText.isNotBlank()
                             }
                         },
-                        onDocumentSelectionGesture = { index, event ->
-                            handleDocumentSelectionGesture(index, event)
+                        onDocumentSelectionGesture = { _, event ->
+                            handleDocumentSelectionGesture(event)
                         },
                         onResolutionRequested = { index, dpi ->
                             requestSharperPage(index, dpi)
@@ -415,11 +415,15 @@ class MainActivity : Activity() {
         val selection = documentSelection
         if (selection != null) {
             val item = selection.ranges.firstOrNull { it.pageIndex == pageIndex }
+            val firstEndpoint = DocumentSelectionBuilder.firstEndpoint(selection.anchor, selection.focus)
+            val lastEndpoint = DocumentSelectionBuilder.lastEndpoint(selection.anchor, selection.focus)
             view.setDocumentSelectionRange(
                 item?.let { it.startGlyph..it.endGlyph },
-                pageIndex == selection.ranges.first().pageIndex,
-                pageIndex == selection.ranges.last().pageIndex,
-                true
+                showStartHandle = pageIndex == firstEndpoint.pageIndex,
+                showEndHandle = pageIndex == lastEndpoint.pageIndex,
+                finished = true,
+                startHandleFixedEndpoint = lastEndpoint.takeIf { pageIndex == firstEndpoint.pageIndex },
+                endHandleFixedEndpoint = firstEndpoint.takeIf { pageIndex == lastEndpoint.pageIndex }
             )
             return
         }
@@ -427,11 +431,15 @@ class MainActivity : Activity() {
         val focus = selectionFocus ?: return
         val page = view.getPageText() ?: return
         val range = DocumentSelectionBuilder.rangeForPage(anchor, focus, pageIndex, page.glyphs.size)
+        val firstEndpoint = DocumentSelectionBuilder.firstEndpoint(anchor, focus)
+        val lastEndpoint = DocumentSelectionBuilder.lastEndpoint(anchor, focus)
         view.setDocumentSelectionRange(
             range,
-            pageIndex == minOf(anchor.pageIndex, focus.pageIndex),
-            pageIndex == maxOf(anchor.pageIndex, focus.pageIndex),
-            !activeSelectionGesture
+            showStartHandle = pageIndex == firstEndpoint.pageIndex,
+            showEndHandle = pageIndex == lastEndpoint.pageIndex,
+            finished = !activeSelectionGesture,
+            startHandleFixedEndpoint = lastEndpoint.takeIf { pageIndex == firstEndpoint.pageIndex },
+            endHandleFixedEndpoint = firstEndpoint.takeIf { pageIndex == lastEndpoint.pageIndex }
         )
     }
 
@@ -570,10 +578,7 @@ class MainActivity : Activity() {
         highlightButton.isEnabled = false
     }
 
-    private fun handleDocumentSelectionGesture(
-        sourcePageIndex: Int,
-        event: SelectionGestureEvent
-    ) {
+    private fun handleDocumentSelectionGesture(event: SelectionGestureEvent) {
         if (event.cancelled) {
             clearVisibleSelections()
             statusText.text = "Selection cancelled"
@@ -581,7 +586,7 @@ class MainActivity : Activity() {
         }
         if (event.started) {
             selectionAnchor = SelectionEndpoint(
-                sourcePageIndex,
+                event.anchorPageIndex,
                 minOf(event.anchorStartGlyph, event.anchorEndGlyph),
                 maxOf(event.anchorStartGlyph, event.anchorEndGlyph)
             )
@@ -678,8 +683,10 @@ class MainActivity : Activity() {
         focus: SelectionEndpoint,
         finished: Boolean
     ) {
-        val firstPage = minOf(anchor.pageIndex, focus.pageIndex)
-        val lastPage = maxOf(anchor.pageIndex, focus.pageIndex)
+        val firstEndpoint = DocumentSelectionBuilder.firstEndpoint(anchor, focus)
+        val lastEndpoint = DocumentSelectionBuilder.lastEndpoint(anchor, focus)
+        val firstPage = firstEndpoint.pageIndex
+        val lastPage = lastEndpoint.pageIndex
         for ((view, binding) in boundPageViews) {
             val page = view.getPageText()
             val range = page?.let {
@@ -687,9 +694,11 @@ class MainActivity : Activity() {
             }
             view.setDocumentSelectionRange(
                 range,
-                binding.pageIndex == firstPage,
-                binding.pageIndex == lastPage,
-                finished
+                showStartHandle = binding.pageIndex == firstPage,
+                showEndHandle = binding.pageIndex == lastPage,
+                finished = finished,
+                startHandleFixedEndpoint = lastEndpoint.takeIf { binding.pageIndex == firstPage },
+                endHandleFixedEndpoint = firstEndpoint.takeIf { binding.pageIndex == lastPage }
             )
         }
         if (anchor.pageIndex == focus.pageIndex) {
@@ -744,13 +753,17 @@ class MainActivity : Activity() {
                 documentSelection = resolved
                 selectionAnchor = resolved.anchor
                 selectionFocus = resolved.focus
+                val firstEndpoint = DocumentSelectionBuilder.firstEndpoint(resolved.anchor, resolved.focus)
+                val lastEndpoint = DocumentSelectionBuilder.lastEndpoint(resolved.anchor, resolved.focus)
                 for ((view, binding) in boundPageViews) {
                     val item = resolved.ranges.firstOrNull { it.pageIndex == binding.pageIndex }
                     view.setDocumentSelectionRange(
                         item?.let { it.startGlyph..it.endGlyph },
-                        binding.pageIndex == resolved.ranges.first().pageIndex,
-                        binding.pageIndex == resolved.ranges.last().pageIndex,
-                        true
+                        showStartHandle = binding.pageIndex == firstEndpoint.pageIndex,
+                        showEndHandle = binding.pageIndex == lastEndpoint.pageIndex,
+                        finished = true,
+                        startHandleFixedEndpoint = lastEndpoint.takeIf { binding.pageIndex == firstEndpoint.pageIndex },
+                        endHandleFixedEndpoint = firstEndpoint.takeIf { binding.pageIndex == lastEndpoint.pageIndex }
                     )
                 }
                 selectedTextView.text = resolved.selectedText
@@ -858,6 +871,7 @@ class MainActivity : Activity() {
     }
 
     private fun showSearchHit(hit: SearchHit) {
+        clearVisibleSelections()
         currentPage = hit.pageIndex
         pendingHighlight = null
         pendingSearchHit = hit
