@@ -492,6 +492,7 @@ class MainActivity : Activity() {
         val preloadFirst = max(0, first - 1)
         val preloadLast = minOf(active.pages.lastIndex, last + 1)
         for (index in preloadFirst..preloadLast) {
+            requestPageText(index)
             val dpi = requestedRenderDpiByPage[index] ?: PdfPageView.BASE_RENDER_DPI
             requestPageRender(index, dpi)
         }
