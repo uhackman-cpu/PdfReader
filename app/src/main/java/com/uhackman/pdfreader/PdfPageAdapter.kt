@@ -11,6 +11,7 @@ class PdfPageAdapter(
     private val onPageBound: (Int, PdfPageView) -> Unit,
     private val onPageRecycled: (Int, PdfPageView) -> Unit,
     private val onSelectionChanged: (Int, Int, Int) -> Unit,
+    private val onDocumentSelectionGesture: (Int, SelectionGestureEvent) -> Unit,
     private val onResolutionRequested: (Int, Float) -> Unit
 ) : RecyclerView.Adapter<PdfPageAdapter.PageHolder>() {
 
@@ -31,6 +32,7 @@ class PdfPageAdapter(
 
     override fun onBindViewHolder(holder: PageHolder, position: Int) {
         holder.boundPageIndex = position
+        holder.pageView.documentPageIndex = position
         val density = holder.pageView.resources.displayMetrics.density
         val measuredWidth = holder.pageView.parent
             ?.let { it as? RecyclerView }
@@ -55,6 +57,9 @@ class PdfPageAdapter(
         holder.pageView.onSelectionChanged = { start, end ->
             onSelectionChanged(position, start, end)
         }
+        holder.pageView.onDocumentSelectionGesture = { event ->
+            onDocumentSelectionGesture(position, event)
+        }
         holder.pageView.onResolutionRequested = { dpi ->
             onResolutionRequested(position, dpi)
         }
@@ -66,7 +71,9 @@ class PdfPageAdapter(
         holder.pageView.clearPage()
         if (pageIndex >= 0) onPageRecycled(pageIndex, holder.pageView)
         holder.pageView.onSelectionChanged = null
+        holder.pageView.onDocumentSelectionGesture = null
         holder.pageView.onResolutionRequested = null
+        holder.pageView.documentPageIndex = RecyclerView.NO_POSITION
         holder.boundPageIndex = RecyclerView.NO_POSITION
         super.onViewRecycled(holder)
     }
