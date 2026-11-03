@@ -26,6 +26,7 @@ class PdfPageView @JvmOverloads constructor(
     private var bitmap: Bitmap? = null
     private var highlights: List<Highlight> = emptyList()
     private var searchRange: IntRange? = null
+    private var pendingSearchRange: Pair<Int, Int>? = null
     private var selectionRange: IntRange? = null
 
     var onSelectionChanged: ((Int, Int) -> Unit)? = null
@@ -124,12 +125,13 @@ class PdfPageView @JvmOverloads constructor(
         setBackgroundColor(Color.rgb(242, 242, 242))
     }
 
-    fun setPage(pageText: PageText, pageBitmap: Bitmap?, pageHighlights: List<Highlight>) {
+    fun setPage(pageText: PageText?, pageBitmap: Bitmap?, pageHighlights: List<Highlight>) {
         page = pageText
-        glyphSpatialIndex = GlyphSpatialIndex(pageText.glyphs)
+        glyphSpatialIndex = GlyphSpatialIndex(pageText?.glyphs ?: emptyList())
         bitmap = pageBitmap
         highlights = pageHighlights
         searchRange = null
+        pendingSearchRange = null
         selectionRange = null
         selectionAnchor = -1
         selectionFocus = -1
@@ -146,6 +148,22 @@ class PdfPageView @JvmOverloads constructor(
         invalidate()
     }
 
+    /** Installs extracted text after the page bitmap/view has already been bound. */
+    fun setPageText(pageText: PageText) {
+        page = pageText
+        glyphSpatialIndex = GlyphSpatialIndex(pageText.glyphs)
+        pendingSearchRange?.let { (start, end) ->
+            searchRange = pageText.glyphRangeForChars(start, end)
+        }
+        pendingSearchRange = null
+        invalidate()
+    }
+
+    fun getPageText(): PageText? = page
+
+    fun textForGlyphRange(startGlyph: Int, endGlyph: Int): String? =
+        page?.textForGlyphRange(startGlyph, endGlyph)
+
     /** Detaches page data before the RecyclerView returns this view to its pool. */
     fun clearPage() {
         page = null
@@ -153,6 +171,7 @@ class PdfPageView @JvmOverloads constructor(
         bitmap = null
         highlights = emptyList()
         searchRange = null
+        pendingSearchRange = null
         selectionRange = null
         selectionAnchor = -1
         selectionFocus = -1
@@ -186,7 +205,14 @@ class PdfPageView @JvmOverloads constructor(
     }
 
     fun setSearchRange(startChar: Int, endChar: Int) {
-        searchRange = page?.glyphRangeForChars(startChar, endChar)
+        val currentPage = page
+        if (currentPage == null) {
+            pendingSearchRange = startChar to endChar
+            searchRange = null
+        } else {
+            pendingSearchRange = null
+            searchRange = currentPage.glyphRangeForChars(startChar, endChar)
+        }
         invalidate()
     }
 
