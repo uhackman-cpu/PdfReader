@@ -37,6 +37,18 @@ class DocumentSelectionTest {
     }
 
     @Test
+    fun sameStartPrefersTheWiderEndpointRange() {
+        val result = DocumentSelectionBuilder.build(
+            SelectionEndpoint(0, 3, 7),
+            SelectionEndpoint(0, 3, 5),
+            mapOf(0 to page("abcdefghij")),
+            1
+        )
+        assertEquals("defgh", result?.selectedText)
+        assertEquals(3..7, result?.ranges?.single()?.let { it.startGlyph..it.endGlyph })
+    }
+
+    @Test
     fun previewComputesPageLocalFragments() {
         val anchor = SelectionEndpoint(1, 4, 4)
         val focus = SelectionEndpoint(3, 2, 2)

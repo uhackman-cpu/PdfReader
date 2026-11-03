@@ -132,6 +132,8 @@ object DocumentSelectionBuilder {
 
     private fun compare(a: SelectionEndpoint, b: SelectionEndpoint): Int {
         if (a.pageIndex != b.pageIndex) return a.pageIndex.compareTo(b.pageIndex)
-        return a.startGlyph.compareTo(b.startGlyph)
+        val startComparison = a.startGlyph.compareTo(b.startGlyph)
+        return if (startComparison != 0) startComparison
+        else a.endGlyph.compareTo(b.endGlyph)
     }
 }
