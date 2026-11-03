@@ -58,8 +58,8 @@ object HighlightAnchorResolver {
         private var best: Candidate? = null
 
         fun accept(pageIndex: Int, page: PageText) {
-            if (normalize(highlight.text).isEmpty()) return
-            val candidate = candidatesForPage(pageIndex, page, highlight).minWithOrNull(
+            if (HighlightAnchorResolver.normalize(highlight.text).isEmpty()) return
+            val candidate = HighlightAnchorResolver.candidatesForPage(pageIndex, page, highlight).minWithOrNull(
                 compareByDescending<Candidate> { it.contextScore }
                     .thenBy { it.distance }
             ) ?: return
