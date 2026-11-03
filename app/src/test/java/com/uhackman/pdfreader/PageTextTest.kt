@@ -110,6 +110,34 @@ class PageTextTest {
         assertEquals(-1, GlyphSpatialIndex(page.glyphs).nearestGlyphIndex(1.2f, 0.5f))
     }
 
+    @Test
+    fun gestureArbitrationLetsVerticalSwipesScrollAndHorizontalDragsSelect() {
+        assertEquals(
+            GestureIntent.VERTICAL_SCROLL,
+            GestureArbitration.classify(3f, 18f, 8f)
+        )
+        assertEquals(
+            GestureIntent.HORIZONTAL_SELECTION,
+            GestureArbitration.classify(18f, 3f, 8f)
+        )
+        assertEquals(
+            GestureIntent.UNDECIDED,
+            GestureArbitration.classify(4f, 5f, 8f)
+        )
+    }
+
+    @Test
+    fun gestureArbitrationHandlesDiagonalMovementAndInvalidCoordinates() {
+        assertEquals(
+            GestureIntent.HORIZONTAL_SELECTION,
+            GestureArbitration.classify(14f, 13f, 8f)
+        )
+        assertEquals(
+            GestureIntent.UNDECIDED,
+            GestureArbitration.classify(Float.NaN, 20f, 8f)
+        )
+    }
+
     private fun pageFromText(text: String): PageText {
         val glyphs = mutableListOf<Glyph>()
         var charIndex = 0
