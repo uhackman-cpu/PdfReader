@@ -1,0 +1,42 @@
+name: Trace ReadEra Rectangle Serialization Helpers
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  helper-detail:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y binutils-aarch64-linux-gnu llvm
+      - name: Extract library
+        run: |
+          mkdir -p native analysis
+          for apk in *.apk; do
+            if unzip -Z1 "$apk" | grep -qx 'lib/arm64-v8a/libreadera.so'; then
+              unzip -p "$apk" lib/arm64-v8a/libreadera.so > native/libreadera.so
+              break
+            fi
+          done
+          test -s native/libreadera.so
+      - name: Disassemble exact helper bodies and callers
+        run: |
+          {
+            echo '# helper 0x7baf0 and nearby'
+            llvm-objdump -d --demangle --no-show-raw-insn --start-address=0x7b900 --stop-address=0x7bd80 native/libreadera.so
+            echo '# parser helper 0x83868 and nearby'
+            llvm-objdump -d --demangle --no-show-raw-insn --start-address=0x83780 --stop-address=0x83940 native/libreadera.so
+            echo '# caller around anchor decoding'
+            llvm-objdump -d --demangle --no-show-raw-insn --start-address=0x777c0 --stop-address=0x77a44 native/libreadera.so
+            echo '# page cache init helper'
+            llvm-objdump -d --demangle --no-show-raw-insn --start-address=0x68380 --stop-address=0x685f8 native/libreadera.so
+            echo '# strings'
+            strings -a -t x native/libreadera.so | grep -iE 'xpath|bookmark|rect|quad|glyph|char|text|page|clip|bound|annotation|highlight|font|line|word|float|double' || true
+          } > analysis/serialization_helpers.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: readera-serialization-helper-detail
+          path: analysis/serialization_helpers.txt
+          retention-days: 7
