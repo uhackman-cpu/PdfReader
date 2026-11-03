@@ -39,18 +39,30 @@ object HighlightAnchorResolver {
      * Resolves against a streaming sequence so large documents do not need all
      * extracted page text and glyph geometry resident in memory at once.
      */
+    fun streaming(highlight: Highlight): StreamingResolver =
+        StreamingResolver(highlight)
+
     fun resolveInPages(
         pages: Sequence<Pair<Int, PageText>>,
         highlight: Highlight
     ): ResolvedHighlightAnchor? {
-        if (normalize(highlight.text).isEmpty()) return null
+        val resolver = streaming(highlight)
+        pages.forEach { (pageIndex, page) -> resolver.accept(pageIndex, page) }
+        return resolver.result()
+    }
 
-        var best: Candidate? = null
-        for ((pageIndex, page) in pages) {
-            val candidate = candidatesForPage(pageIndex, page, highlight).minWithOrNull(
+    /** Incremental best-match resolver for a one-pass PDF page traversal. */
+    class StreamingResolver internal constructor(
+        private val highlight: Highlight
+    ) {
+        private var best: Candidate? = null
+
+        fun accept(pageIndex: Int, page: PageText) {
+            if (HighlightAnchorResolver.normalize(highlight.text).isEmpty()) return
+            val candidate = HighlightAnchorResolver.candidatesForPage(pageIndex, page, highlight).minWithOrNull(
                 compareByDescending<Candidate> { it.contextScore }
                     .thenBy { it.distance }
-            ) ?: continue
+            ) ?: return
             val previous = best
             val isBetter = previous == null ||
                 candidate.contextScore > previous.contextScore ||
@@ -64,8 +76,10 @@ object HighlightAnchorResolver {
             if (isBetter) best = candidate
         }
 
-        val resolved = best ?: return null
-        return ResolvedHighlightAnchor(resolved.pageIndex, resolved.range)
+        fun result(): ResolvedHighlightAnchor? {
+            val resolved = best ?: return null
+            return ResolvedHighlightAnchor(resolved.pageIndex, resolved.range)
+        }
     }
 
     private fun candidatesForPage(

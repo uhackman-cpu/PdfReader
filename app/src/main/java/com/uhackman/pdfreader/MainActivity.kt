@@ -314,7 +314,18 @@ class MainActivity : Activity() {
 
     private fun requestPageText(pageIndex: Int) {
         val active = session ?: return
-        if (pageIndex !in active.pages.indices || active.pageTextCache.contains(pageIndex)) return
+        if (pageIndex !in active.pages.indices) return
+
+        // Search may populate the cache between bindPage's acquire and this
+        // request. Attach that cached page instead of silently returning and
+        // leaving the already-bound view without a text layer.
+        val cachedPage = active.pageTextCache.acquire(pageIndex)
+        if (cachedPage != null) {
+            active.pageTextCache.release(pageIndex)
+            attachPageTextToBoundViews(active, pageIndex, cachedPage)
+            return
+        }
+
         val requestKey = active.documentKey + "|" + pageIndex
         if (!pendingTextPageIndexes.add(requestKey)) return
 
@@ -334,22 +345,30 @@ class MainActivity : Activity() {
                     return@runOnUiThread
                 }
 
-                val cached = active.pageTextCache.put(pageIndex, extracted)
-                val targets = boundPageViews.entries.filter { it.value.pageIndex == pageIndex }
-                for ((view, binding) in targets) {
-                    if (binding.textLease) binding.textCache?.release(pageIndex)
-                    val leased = if (cached) active.pageTextCache.acquire(pageIndex) else null
-                    val pageText = leased ?: extracted
-                    view.setPageText(pageText)
-                    boundPageViews[view] = binding.copy(
-                        textCache = active.pageTextCache,
-                        textLease = leased != null
-                    )
-                    resolveStoredHighlightsForPage(active, pageIndex, pageText)
-                    view.setHighlights(active.resolvedHighlights.filter { it.pageIndex == pageIndex })
-                    applyPendingPageState(pageIndex, view)
-                }
+                active.pageTextCache.put(pageIndex, extracted)
+                attachPageTextToBoundViews(active, pageIndex, extracted)
             }
+        }
+    }
+
+    private fun attachPageTextToBoundViews(
+        active: PdfSession,
+        pageIndex: Int,
+        fallbackPageText: PageText
+    ) {
+        val targets = boundPageViews.entries.filter { it.value.pageIndex == pageIndex }
+        for ((view, binding) in targets) {
+            if (binding.textLease) continue
+            val leased = active.pageTextCache.acquire(pageIndex)
+            val pageText = leased ?: fallbackPageText
+            view.setPageText(pageText)
+            boundPageViews[view] = binding.copy(
+                textCache = active.pageTextCache,
+                textLease = leased != null
+            )
+            resolveStoredHighlightsForPage(active, pageIndex, pageText)
+            view.setHighlights(active.resolvedHighlights.filter { it.pageIndex == pageIndex })
+            applyPendingPageState(pageIndex, view)
         }
     }
 
@@ -549,26 +568,19 @@ class MainActivity : Activity() {
         io.execute {
             val hits = mutableListOf<SearchHit>()
             try {
-                for (pageIndex in active.pages.indices) {
-                    val cached = active.pageTextCache.acquire(pageIndex)
-                    val pageText = cached ?: synchronized(active.document) {
-                        GlyphTextStripper().extractPage(active.document, pageIndex)
-                    }
-                    if (cached != null) {
-                        active.pageTextCache.release(pageIndex)
-                    } else {
+                synchronized(active.document) {
+                    GlyphTextStripper().forEachPage(active.document) { pageIndex, pageText ->
                         active.pageTextCache.put(pageIndex, pageText)
-                    }
-
-                    var from = 0
-                    while (from < pageText.text.length) {
-                        val found = pageText.text.indexOf(query, from, ignoreCase = true)
-                        if (found < 0) break
-                        val end = found + query.length
-                        if (pageText.glyphRangeForChars(found, end) != null) {
-                            hits.add(SearchHit(pageIndex, found, end))
+                        var from = 0
+                        while (from < pageText.text.length) {
+                            val found = pageText.text.indexOf(query, from, ignoreCase = true)
+                            if (found < 0) break
+                            val end = found + query.length
+                            if (pageText.glyphRangeForChars(found, end) != null) {
+                                hits.add(SearchHit(pageIndex, found, end))
+                            }
+                            from = found + max(1, query.length)
                         }
-                        from = found + max(1, query.length)
                     }
                 }
             } catch (error: Exception) {
@@ -740,21 +752,15 @@ class MainActivity : Activity() {
     private fun locateHighlightAndNavigate(active: PdfSession, saved: Highlight) {
         statusText.text = "Locating saved highlight across the document…"
         io.execute {
-            val pages = active.pages.indices.asSequence().map { pageIndex ->
-                val cached = active.pageTextCache.acquire(pageIndex)
-                if (cached != null) {
-                    active.pageTextCache.release(pageIndex)
-                    pageIndex to cached
-                } else {
-                    val extracted = synchronized(active.document) {
-                        GlyphTextStripper().extractPage(active.document, pageIndex)
-                    }
-                    active.pageTextCache.put(pageIndex, extracted)
-                    pageIndex to extracted
-                }
-            }
+            val resolver = HighlightAnchorResolver.streaming(saved)
             val anchor = try {
-                HighlightAnchorResolver.resolveInPages(pages, saved)
+                synchronized(active.document) {
+                    GlyphTextStripper().forEachPage(active.document) { pageIndex, pageText ->
+                        active.pageTextCache.put(pageIndex, pageText)
+                        resolver.accept(pageIndex, pageText)
+                    }
+                }
+                resolver.result()
             } catch (_: Exception) {
                 null
             }
