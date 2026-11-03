@@ -2,7 +2,7 @@ name: Trace ReadEra Page Coordinate Transform
 on:
   workflow_dispatch:
 permissions:
-  contents: read
+  contents: write
   actions: read
 jobs:
   coordinate-trace:
@@ -28,7 +28,6 @@ jobs:
           mkdir -p analysis
           python3 - <<'PY'
           from pathlib import Path
-          import re
 
           root = Path("/tmp/readera-static")
           targets = {
@@ -44,9 +43,7 @@ jobs:
           for path in root.rglob("*.java"):
               name = path.name
               wanted = targets.get(name)
-              if not wanted and name not in ("AbstractC2468y.java", "C2454k.java",
-                                              "AbstractC3568c.java", "JniDoc.java",
-                                              "ReadSurface.java"):
+              if name not in targets:
                   continue
               try:
                   lines = path.read_text(errors="replace").splitlines()
@@ -62,7 +59,7 @@ jobs:
           report = []
           report.append("# ReadEra page-coordinate transform trace")
           report.append("")
-          report.append("This report reuses the already completed JADX artifact; no APK re-analysis was repeated.")
+          report.append("This report reuses the existing successful JADX artifact; no APK re-analysis was repeated.")
           report.append("")
           report.append("## Artifact inventory")
           files = sorted(str(p.relative_to(root)) for p in root.rglob("*") if p.is_file())
@@ -70,7 +67,7 @@ jobs:
           report.append("")
           report.append("## Matching Java source windows")
           if not found:
-              report.append("No matching decompiled Java source files were found. Inspect the artifact layout above; this trace is inconclusive.")
+              report.append("No matching decompiled Java source files were found. This trace is inconclusive.")
           for name, (lines, selected) in found.items():
               report.extend([f"### `{name}`", "", "```java"])
               previous = -2
@@ -82,14 +79,23 @@ jobs:
               report.extend(["```", ""])
           report.append("## Explicit questions")
           report.extend([
-              "- Does the Java consumer normalize coordinates against the unrotated crop box or the rotation-adjusted page dimensions?",
+              "- Does the Java consumer normalize coordinates against the unrotated crop box or rotation-adjusted page dimensions?",
               "- Where are page width/height and crop offsets obtained?",
-              "- Is the page bitmap's displayed orientation handled before or after text-rectangle normalization?",
+              "- Is bitmap orientation handled before or after text-rectangle normalization?",
               "- Which exact coordinate transform is evidenced, and which cases remain unknown?"
           ])
           Path("analysis/readera-page-coordinate-transform.md").write_text("\n".join(report))
-          print("\n".join(report[:120]))
+          print("\n".join(report[:160]))
           PY
+      - name: Publish coordinate trace into repository documentation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          encoded="$(base64 -w0 analysis/readera-page-coordinate-transform.md)"
+          gh api --method PUT "repos/${GITHUB_REPOSITORY}/contents/docs/READERA_PAGE_COORDINATE_TRANSFORM.md" \
+            --field message="Document ReadEra page coordinate trace" \
+            --field content="${encoded}" \
+            --field branch="main"
       - uses: actions/upload-artifact@v4
         with:
           name: readera-page-coordinate-transform
