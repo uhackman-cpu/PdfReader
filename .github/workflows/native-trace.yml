@@ -1,0 +1,160 @@
+name: Trace ReadEra Native PDF JNI
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-trace:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install native analysis tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y binutils-aarch64-linux-gnu llvm python3-capstone python3-pyelftools
+      - name: Extract ARM64 native libraries from APKs
+        shell: bash
+        run: |
+          mkdir -p native analysis
+          shopt -s nullglob
+          for apk in *.apk; do
+            while IFS= read -r entry; do
+              case "$entry" in
+                lib/arm64-v8a/*.so)
+                  out="native/${apk%.apk}/$(basename "$entry")"
+                  mkdir -p "$(dirname "$out")"
+                  unzip -p "$apk" "$entry" > "$out"
+                  ;;
+              esac
+            done < <(unzip -Z1 "$apk")
+          done
+          find native -type f -name '*.so' -exec file {} \; > analysis/native_files.txt
+          find native -type f -name '*.so' -printf '%p %s bytes\n' > analysis/native_sizes.txt
+      - name: Inspect ELF symbols, JNI strings and dependencies
+        shell: bash
+        run: |
+          while IFS= read -r so; do
+            tag="$(echo "$so" | tr '/ ' '__')"
+            {
+              echo "===== $so ====="
+              aarch64-linux-gnu-readelf -h "$so" 2>&1
+              echo "--- Dynamic dependencies ---"
+              aarch64-linux-gnu-readelf -d "$so" 2>&1
+              echo "--- Dynamic symbols ---"
+              aarch64-linux-gnu-readelf --dyn-syms --wide "$so" 2>&1
+              echo "--- Demangled dynamic symbols ---"
+              aarch64-linux-gnu-nm -D -C "$so" 2>&1
+              echo "--- JNI / PDF / rectangle strings ---"
+              strings -a -t x "$so" | grep -iE 'bookmarkRectJni|bookmarkRect|RegisterNatives|JNI_OnLoad|pageTextJni|pageRenderJni|searchTextJni|XPath|annotation|highlight|rectangle|rect|pdfium|mupdf|fitz|poppler|pdf' | head -n 2500 || true
+            } > "analysis/elf_${tag}.txt"
+          done < <(find native -type f -name '*.so' | sort)
+      - name: Resolve AArch64 references to JNI method strings
+        run: |
+          cat > analysis/xref_native.py <<'PY'
+          import os, sys
+          from elftools.elf.elffile import ELFFile
+          from capstone import Cs, CS_ARCH_ARM64, CS_MODE_ARM
+          from capstone.arm64 import ARM64_OP_REG, ARM64_OP_IMM
+          
+          TERMS = [
+              b'bookmarkRectJni', b'bookmarkRect', b'pageTextJni',
+              b'pageRenderJni', b'searchTextJni', b'pageXPathFromCoordsJni',
+              b'pageXPathFromRectJni', b'pageXPathToIndexJni',
+              b'JNI_OnLoad', b'RegisterNatives'
+          ]
+          
+          def regname(md, op):
+              try: return md.reg_name(op.reg)
+              except Exception: return ''
+          
+          for root, _, files in os.walk('native'):
+              for fn in files:
+                  if not fn.endswith('.so'): continue
+                  path = os.path.join(root, fn)
+                  print(f'\\n===== XREF {path} =====')
+                  with open(path, 'rb') as f:
+                      elf = ELFFile(f)
+                      arch = elf['e_machine']
+                      print('Machine:', arch, 'Bits:', elf.elfclass)
+                      targets = []
+                      for sec in elf.iter_sections():
+                          if not hasattr(sec, 'data'): continue
+                          try: data = sec.data()
+                          except Exception: continue
+                          for term in TERMS:
+                              pos = 0
+                              while True:
+                                  off = data.find(term, pos)
+                                  if off < 0: break
+                                  va = int(sec['sh_addr']) + off
+                                  targets.append((va, term.decode(), sec.name))
+                                  pos = off + 1
+                      for va, term, secname in targets:
+                          print(f'STRING {term} section={secname} VA=0x{va:x}')
+                      md = Cs(CS_ARCH_ARM64, CS_MODE_ARM)
+                      md.detail = True
+                      for sec in elf.iter_sections():
+                          flags = int(sec['sh_flags']) if 'sh_flags' in sec.header else 0
+                          if not (flags & 0x4): continue
+                          try: code = sec.data()
+                          except Exception: continue
+                          insns = list(md.disasm(code, int(sec['sh_addr'])))
+                          byaddr = {i.address:n for n,i in enumerate(insns)}
+                          for idx, ins in enumerate(insns):
+                              ref = None
+                              ops = ins.operands
+                              if ins.mnemonic == 'adr' and len(ops) >= 2 and ops[1].type == ARM64_OP_IMM:
+                                  ref = ops[1].imm
+                              elif ins.mnemonic == 'adrp' and len(ops) >= 2 and ops[1].type == ARM64_OP_IMM:
+                                  base_reg = regname(md, ops[0])
+                                  page = ops[1].imm
+                                  for nxt in insns[idx+1:idx+5]:
+                                      no = nxt.operands
+                                      if nxt.mnemonic == 'add' and len(no) >= 3 and no[0].type == ARM64_OP_REG and no[1].type == ARM64_OP_REG and no[2].type == ARM64_OP_IMM:
+                                          if regname(md,no[0]) == base_reg and regname(md,no[1]) == base_reg:
+                                              ref = page + no[2].imm
+                                              break
+                              if ref is None: continue
+                              matches = [(v,t,s) for v,t,s in targets if v == ref]
+                              if not matches: continue
+                              print(f'\\nXREF at 0x{ins.address:x}: {ins.mnemonic} {ins.op_str} -> {matches}')
+                              lo=max(0,idx-8); hi=min(len(insns),idx+18)
+                              for j in range(lo,hi):
+                                  mark='>>' if j==idx else '  '
+                                  ii=insns[j]
+                                  print(f'{mark} 0x{ii.address:x}: {ii.mnemonic} {ii.op_str}')
+          PY
+          python3 analysis/xref_native.py > analysis/native_string_xrefs.txt 2>&1 || true
+      - name: Disassemble JNI_OnLoad when exported
+        shell: bash
+        run: |
+          while IFS= read -r so; do
+            echo "===== $so ====="
+            aarch64-linux-gnu-nm -D "$so" 2>/dev/null | grep -E 'JNI_OnLoad|Java_' || true
+            llvm-objdump -d --demangle --no-show-raw-insn --disassemble-symbols=JNI_OnLoad "$so" 2>&1 | head -n 1500 || true
+          done < <(find native -type f -name '*.so' | sort) > analysis/jni_onload_disassembly.txt
+      - name: Build concise report
+        run: |
+          {
+            echo '# ReadEra native PDF/JNI trace'
+            echo
+            echo 'This report inspects the ARM64 native libraries bundled in the supplied APKs. A stripped binary may expose method strings without exposing original source names.'
+            echo
+            echo '## Extracted libraries'
+            cat analysis/native_sizes.txt
+            echo
+            echo '## JNI string cross-references and nearby instructions'
+            cat analysis/native_string_xrefs.txt
+            echo
+            echo '## JNI_OnLoad exports / disassembly'
+            cat analysis/jni_onload_disassembly.txt
+            echo
+            echo '## ELF / symbol / dependency / matching-string reports'
+            for f in analysis/elf_*.txt; do echo; echo "### $f"; cat "$f"; done
+          } > analysis/REPORT_NATIVE.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: readera-native-trace
+          path: analysis/
+          retention-days: 7
