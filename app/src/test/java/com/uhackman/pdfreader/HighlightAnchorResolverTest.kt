@@ -65,6 +65,34 @@ class HighlightAnchorResolverTest {
         )
     }
 
+    @Test
+    fun restoresAfterLineWrapWhitespaceAndCaseChanges() {
+        val original = page("alpha target omega")
+        val saved = highlightFor(original, 6, 12)
+        val editedText = "prefix alpha\n  TARGET\u00A0omega"
+        val edited = page(editedText)
+        val targetStart = editedText.indexOf("TARGET")
+
+        val resolved = HighlightAnchorResolver.resolveInDocument(listOf(edited), saved)
+
+        assertEquals(0, resolved?.pageIndex)
+        assertEquals(targetStart..targetStart + "TARGET".lastIndex, resolved?.glyphRange)
+    }
+
+    @Test
+    fun normalizedContextStillDisambiguatesReflowedRepeatedPhrases() {
+        val original = page("alpha target omega")
+        val saved = highlightFor(original, 6, 12)
+        val editedText = "wrong target wrong; alpha\n TARGET omega"
+        val edited = page(editedText)
+        val targetStart = editedText.lastIndexOf("TARGET")
+
+        val resolved = HighlightAnchorResolver.resolveInDocument(listOf(edited), saved)
+
+        assertEquals(0, resolved?.pageIndex)
+        assertEquals(targetStart..targetStart + "TARGET".lastIndex, resolved?.glyphRange)
+    }
+
     private fun highlightFor(page: PageText, start: Int, endExclusive: Int): Highlight {
         val startGlyph = page.glyphRangeForChars(start, endExclusive)?.first
             ?: error("Test range must map to glyphs")
