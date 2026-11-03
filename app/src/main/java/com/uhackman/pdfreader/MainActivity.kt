@@ -14,6 +14,8 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.rendering.PDFRenderer
@@ -23,7 +25,7 @@ import kotlin.math.max
 class MainActivity : Activity() {
     private val io = Executors.newSingleThreadExecutor()
     private lateinit var store: HighlightStore
-    private lateinit var pageView: PdfPageView
+    private lateinit var pageList: RecyclerView
     private lateinit var pageInfo: TextView
     private lateinit var statusText: TextView
     private lateinit var searchInput: EditText
@@ -37,8 +39,12 @@ class MainActivity : Activity() {
     private var pendingHighlight: Highlight? = null
     private var searchHits: List<SearchHit> = emptyList()
     private var searchHitIndex = -1
-    private var currentRenderDpi = PdfPageView.BASE_RENDER_DPI
-    private var requestedRenderDpi = PdfPageView.BASE_RENDER_DPI
+    private var pageAdapter: PdfPageAdapter? = null
+    private val bitmapCache = PageBitmapCache()
+    private val boundPageViews = mutableMapOf<PdfPageView, BoundPage>()
+    private val pendingRenderKeys = mutableSetOf<String>()
+    private val requestedRenderDpiByPage = mutableMapOf<Int, Float>()
+    private var selectedPageIndex = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -93,9 +99,22 @@ class MainActivity : Activity() {
         }
         root.addView(pageInfo)
 
-        pageView = PdfPageView(this)
-        pageView.onResolutionRequested = { dpi -> requestSharperPage(dpi) }
-        root.addView(pageView, LinearLayout.LayoutParams(
+        pageList = RecyclerView(this).apply {
+            layoutManager = LinearLayoutManager(this@MainActivity)
+            itemAnimator = null
+            setHasFixedSize(false)
+            setItemViewCacheSize(2)
+            recycledViewPool.setMaxRecycledViews(0, 3)
+            clipToPadding = false
+            setPadding(0, 8, 0, 8)
+            setBackgroundColor(Color.rgb(238, 238, 238))
+            addOnScrollListener(object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    updateVisiblePages()
+                }
+            })
+        }
+        root.addView(pageList, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             0,
             1f
@@ -128,16 +147,6 @@ class MainActivity : Activity() {
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
         ))
-
-        pageView.onSelectionChanged = { start, end ->
-            val active = session
-            val page = active?.pages?.getOrNull(currentPage)
-            if (page != null) {
-                selectedRange = minOf(start, end)..maxOf(start, end)
-                selectedTextView.text = page.textForGlyphRange(start, end)
-                highlightButton.isEnabled = selectedTextView.text.isNotBlank()
-            }
-        }
 
         setContentView(root)
     }
@@ -215,15 +224,44 @@ class MainActivity : Activity() {
                         previous?.document?.close()
                     } catch (_: Exception) {
                     }
+                    releaseAllBoundPageViews()
+                    pageList.adapter = null
                     session = loaded
                     currentPage = 0
+                    selectedPageIndex = -1
                     selectedRange = null
                     pendingSearchHit = null
                     pendingHighlight = null
                     searchHits = emptyList()
                     searchHitIndex = -1
+                    requestedRenderDpiByPage.clear()
+                    pendingRenderKeys.clear()
+                    pageAdapter = PdfPageAdapter(
+                        pageCount = loaded.pages.size,
+                        pageAspectRatio = { index ->
+                            val page = loaded.pages[index]
+                            page.heightPoints / page.widthPoints.coerceAtLeast(1f)
+                        },
+                        onPageBound = { index, view -> bindPage(index, view) },
+                        onPageRecycled = { _, view -> releasePageView(view) },
+                        onSelectionChanged = { index, start, end ->
+                            val page = loaded.pages.getOrNull(index)
+                            if (page != null) {
+                                selectedPageIndex = index
+                                selectedRange = minOf(start, end)..maxOf(start, end)
+                                selectedTextView.text = page.textForGlyphRange(start, end)
+                                highlightButton.isEnabled = selectedTextView.text.isNotBlank()
+                            }
+                        },
+                        onResolutionRequested = { index, dpi ->
+                            requestSharperPage(index, dpi)
+                        }
+                    )
+                    pageList.adapter = pageAdapter
                     pageInfo.text = "Page 1 / " + loaded.pages.size
-                    renderCurrentPage()
+                    statusText.text = "Continuous scrolling • nearby pages render on demand"
+                    pageList.scrollToPosition(0)
+                    updateVisiblePages()
                 }
             } catch (error: Exception) {
                 try {
@@ -238,87 +276,74 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun renderCurrentPage() {
+    private fun bindPage(pageIndex: Int, view: PdfPageView) {
         val active = session ?: return
-        if (active.pages.isEmpty()) {
-            statusText.text = "No pages were read from this PDF."
-            return
-        }
-        currentPage = currentPage.coerceIn(0, active.pages.lastIndex)
-        val pageIndex = currentPage
-        val pageData = active.pages[pageIndex]
-        val pageDpi = RenderDpiPolicy.cap(
-            pageData.widthPoints,
-            pageData.heightPoints,
-            PdfPageView.BASE_RENDER_DPI
-        )
-        currentRenderDpi = pageDpi
-        requestedRenderDpi = pageDpi
-        pageInfo.text = "Page " + (pageIndex + 1) + " / " + active.pages.size
-        statusText.text = "Rendering page…"
-        selectedRange = null
-        selectedTextView.text = "Drag across text to select it"
-        highlightButton.isEnabled = false
+        val pageData = active.pages.getOrNull(pageIndex) ?: return
+        boundPageViews.remove(view)?.cacheKey?.let(bitmapCache::release)
 
-        io.execute {
-            var rendered: Bitmap? = null
-            var failure: Exception? = null
-            try {
-                rendered = synchronized(active.document) {
-                    active.renderer.renderImageWithDPI(pageIndex, pageDpi)
-                }
-            } catch (error: Exception) {
-                failure = error
-            }
-            val pageHighlights = active.resolvedHighlights.filter { it.pageIndex == pageIndex }
-            runOnUiThread {
-                if (session !== active || currentPage != pageIndex) {
-                    rendered?.recycle()
-                    return@runOnUiThread
-                }
-                val image = rendered
-                if (image == null) {
-                    statusText.text = "Page render failed: " + (failure?.message ?: "unknown error")
-                    return@runOnUiThread
-                }
-                pageView.setPage(active.pages[pageIndex], image, pageHighlights)
-                pendingSearchHit?.takeIf { it.pageIndex == pageIndex }?.let { hit ->
-                    pageView.setSearchRange(hit.startChar, hit.endChar)
-                    pendingSearchHit = null
-                }
-                pendingHighlight?.takeIf { it.pageIndex == pageIndex }?.let { item ->
-                    pageView.setSelectionRange(item.startGlyph, item.endGlyph)
-                    selectedRange = item.startGlyph..item.endGlyph
-                    selectedTextView.text = item.text
-                    highlightButton.isEnabled = true
-                    pendingHighlight = null
-                }
-                val glyphCount = active.pages[pageIndex].glyphs.size
-                statusText.text = if (glyphCount == 0) {
-                    "No selectable text layer on this page. Scanned PDFs need OCR."
-                } else {
-                    glyphCount.toString() + " positioned text units • long-press word / drag select • pinch to zoom"
-                }
-            }
+        val requestedDpi = requestedRenderDpiByPage[pageIndex] ?: PdfPageView.BASE_RENDER_DPI
+        var key = pageBitmapKey(active, pageIndex, requestedDpi)
+        var cached = bitmapCache.acquire(key)
+        if (cached == null && requestedDpi > PdfPageView.BASE_RENDER_DPI) {
+            key = pageBitmapKey(active, pageIndex, PdfPageView.BASE_RENDER_DPI)
+            cached = bitmapCache.acquire(key)
+        }
+        boundPageViews[view] = BoundPage(pageIndex, if (cached != null) key else null)
+        view.setPage(
+            pageData,
+            cached,
+            active.resolvedHighlights.filter { it.pageIndex == pageIndex }
+        )
+        applyPendingPageState(pageIndex, view)
+        if (cached == null) requestPageRender(pageIndex, requestedDpi)
+    }
+
+    private fun applyPendingPageState(pageIndex: Int, view: PdfPageView) {
+        pendingSearchHit?.takeIf { it.pageIndex == pageIndex }?.let { hit ->
+            view.setSearchRange(hit.startChar, hit.endChar)
+            pendingSearchHit = null
+        }
+        pendingHighlight?.takeIf { it.pageIndex == pageIndex }?.let { item ->
+            view.setSelectionRange(item.startGlyph, item.endGlyph)
+            selectedPageIndex = pageIndex
+            selectedRange = item.startGlyph..item.endGlyph
+            selectedTextView.text = item.text
+            highlightButton.isEnabled = true
+            pendingHighlight = null
         }
     }
 
+    private fun releasePageView(view: PdfPageView) {
+        val bound = boundPageViews.remove(view) ?: return
+        bound.cacheKey?.let(bitmapCache::release)
+    }
 
-    private fun requestSharperPage(requestedDpi: Float) {
+    private fun releaseAllBoundPageViews() {
+        boundPageViews.toList().forEach { (view, bound) ->
+            view.clearPage()
+            bound.cacheKey?.let(bitmapCache::release)
+        }
+        boundPageViews.clear()
+        bitmapCache.clear()
+    }
+
+    private fun pageBitmapKey(active: PdfSession, pageIndex: Int, dpi: Float): String =
+        active.documentKey + "|" + pageIndex + "|" + dpi.toInt()
+
+    private fun requestPageRender(pageIndex: Int, requestedDpi: Float) {
         val active = session ?: return
-        val pageIndex = currentPage
         val pageData = active.pages.getOrNull(pageIndex) ?: return
-        val desiredDpi = requestedDpi.coerceIn(
-            PdfPageView.BASE_RENDER_DPI,
-            PdfPageView.MAX_RENDER_DPI
-        )
         val targetDpi = RenderDpiPolicy.cap(
             pageData.widthPoints,
             pageData.heightPoints,
-            desiredDpi
+            requestedDpi
         )
-        if (targetDpi <= requestedRenderDpi * 1.08f) return
-        requestedRenderDpi = targetDpi
+        val key = pageBitmapKey(active, pageIndex, targetDpi)
+        if (bitmapCache.contains(key)) {
+            displayCachedBitmap(active, pageIndex, targetDpi, key)
+            return
+        }
+        if (!pendingRenderKeys.add(key)) return
 
         io.execute {
             var rendered: Bitmap? = null
@@ -330,25 +355,100 @@ class MainActivity : Activity() {
             } catch (error: Exception) {
                 failure = error
             }
-
             runOnUiThread {
-                if (session !== active || currentPage != pageIndex) {
+                pendingRenderKeys.remove(key)
+                if (session !== active) {
                     rendered?.recycle()
                     return@runOnUiThread
                 }
                 val image = rendered
                 if (image == null) {
-                    requestedRenderDpi = currentRenderDpi
-                    statusText.text = "Higher-resolution render failed: " +
+                    if (targetDpi > PdfPageView.BASE_RENDER_DPI) {
+                        requestedRenderDpiByPage[pageIndex] = PdfPageView.BASE_RENDER_DPI
+                    }
+                    statusText.text = "Page render failed: " +
                         (failure?.message ?: "unknown error")
                     return@runOnUiThread
                 }
-                currentRenderDpi = targetDpi
-                requestedRenderDpi = targetDpi
-                pageView.replaceBitmap(image)
-                statusText.text = "Zoom detail refreshed at " + targetDpi.toInt() + " DPI"
+                bitmapCache.put(key, image)
+                displayCachedBitmap(active, pageIndex, targetDpi, key)
             }
         }
+    }
+
+    private fun displayCachedBitmap(
+        active: PdfSession,
+        pageIndex: Int,
+        dpi: Float,
+        key: String
+    ) {
+        val entry = boundPageViews.entries.firstOrNull {
+            it.value.pageIndex == pageIndex
+        } ?: return
+        val view = entry.key
+        val oldBinding = entry.value
+        if (oldBinding.cacheKey == key) return
+        val image = bitmapCache.acquire(key) ?: return
+        val pageData = active.pages.getOrNull(pageIndex) ?: run {
+            bitmapCache.release(key)
+            return
+        }
+        if (dpi <= PdfPageView.BASE_RENDER_DPI * 1.01f) {
+            view.setPage(
+                pageData,
+                image,
+                active.resolvedHighlights.filter { it.pageIndex == pageIndex }
+            )
+        } else {
+            view.replaceBitmap(image)
+        }
+        boundPageViews[view] = BoundPage(pageIndex, key)
+        oldBinding.cacheKey?.let(bitmapCache::release)
+        applyPendingPageState(pageIndex, view)
+    }
+
+    private fun updateVisiblePages() {
+        val active = session ?: return
+        val layout = pageList.layoutManager as? LinearLayoutManager ?: return
+        val first = layout.findFirstVisibleItemPosition()
+        val last = layout.findLastVisibleItemPosition()
+        if (first == RecyclerView.NO_POSITION || last == RecyclerView.NO_POSITION) return
+
+        currentPage = ((first + last) / 2).coerceIn(active.pages.indices)
+        pageInfo.text = "Page " + (currentPage + 1) + " / " + active.pages.size
+
+        val preloadFirst = max(0, first - 1)
+        val preloadLast = minOf(active.pages.lastIndex, last + 1)
+        for (index in preloadFirst..preloadLast) {
+            val dpi = requestedRenderDpiByPage[index] ?: PdfPageView.BASE_RENDER_DPI
+            requestPageRender(index, dpi)
+        }
+    }
+
+    private fun clearVisibleSelections() {
+        boundPageViews.keys.forEach { it.clearSelection() }
+        selectedRange = null
+        selectedPageIndex = -1
+        selectedTextView.text = "Selected text will appear here"
+        highlightButton.isEnabled = false
+    }
+
+    private fun requestSharperPage(pageIndex: Int, requestedDpi: Float) {
+        val active = session ?: return
+        val pageData = active.pages.getOrNull(pageIndex) ?: return
+        val desiredDpi = requestedDpi.coerceIn(
+            PdfPageView.BASE_RENDER_DPI,
+            PdfPageView.MAX_RENDER_DPI
+        )
+        val targetDpi = RenderDpiPolicy.cap(
+            pageData.widthPoints,
+            pageData.heightPoints,
+            desiredDpi
+        )
+        val currentDpi = requestedRenderDpiByPage[pageIndex] ?: PdfPageView.BASE_RENDER_DPI
+        if (targetDpi <= currentDpi * 1.08f) return
+        requestedRenderDpiByPage[pageIndex] = targetDpi
+        requestPageRender(pageIndex, targetDpi)
     }
 
     private fun changePage(delta: Int) {
@@ -356,10 +456,7 @@ class MainActivity : Activity() {
         val next = currentPage + delta
         if (next !in active.pages.indices) return
         currentPage = next
-        pendingSearchHit = null
-        pendingHighlight = null
-        pageView.clearSelection()
-        renderCurrentPage()
+        pageList.smoothScrollToPosition(next)
     }
 
     private fun findText() {
@@ -390,7 +487,7 @@ class MainActivity : Activity() {
         searchHitIndex = if (hits.isEmpty()) -1 else 0
         if (hits.isEmpty()) {
             statusText.text = "No text matches found."
-            pageView.clearSelection()
+            clearVisibleSelections()
             return
         }
         showSearchHit(hits[0])
@@ -415,13 +512,21 @@ class MainActivity : Activity() {
         currentPage = hit.pageIndex
         pendingHighlight = null
         pendingSearchHit = hit
-        renderCurrentPage()
+        pageList.scrollToPosition(hit.pageIndex)
+        val visible = boundPageViews.entries.firstOrNull {
+            it.value.pageIndex == hit.pageIndex
+        }?.key
+        if (visible != null) {
+            visible.setSearchRange(hit.startChar, hit.endChar)
+            pendingSearchHit = null
+        }
     }
 
     private fun saveHighlight() {
         val active = session ?: return
         val range = selectedRange ?: return
-        val page = active.pages.getOrNull(currentPage) ?: return
+        val pageIndex = selectedPageIndex
+        val page = active.pages.getOrNull(pageIndex) ?: return
         val selectedText = page.textForGlyphRange(range.first, range.last)
         if (selectedText.isBlank()) return
 
@@ -440,20 +545,24 @@ class MainActivity : Activity() {
                 val lastGlyph = page.glyphs[range.last]
                 val startChar = firstGlyph.startChar
                 val endChar = lastGlyph.endChar
-                val prefixText = page.text.substring(max(0, startChar - ANCHOR_CONTEXT_LENGTH), startChar)
+                val prefixText = page.text.substring(
+                    max(0, startChar - ANCHOR_CONTEXT_LENGTH),
+                    startChar
+                )
                 val suffixText = page.text.substring(
                     endChar,
                     minOf(page.text.length, endChar + ANCHOR_CONTEXT_LENGTH)
                 )
                 val createdAt = System.currentTimeMillis()
+                val note = noteInput.text.toString()
                 val id = store.add(
                     documentKey = active.documentKey,
-                    pageIndex = currentPage,
+                    pageIndex = pageIndex,
                     startGlyph = range.first,
                     endGlyph = range.last,
                     text = selectedText,
                     color = Color.YELLOW,
-                    note = noteInput.text.toString(),
+                    note = note,
                     startChar = startChar,
                     endChar = endChar,
                     prefixText = prefixText,
@@ -462,12 +571,12 @@ class MainActivity : Activity() {
                 if (id >= 0L) {
                     val saved = Highlight(
                         id = id,
-                        pageIndex = currentPage,
+                        pageIndex = pageIndex,
                         startGlyph = range.first,
                         endGlyph = range.last,
                         text = selectedText,
                         color = Color.YELLOW,
-                        note = noteInput.text.toString(),
+                        note = note,
                         createdAt = createdAt,
                         startChar = startChar,
                         endChar = endChar,
@@ -476,8 +585,10 @@ class MainActivity : Activity() {
                     )
                     active.storedHighlights.add(saved)
                     active.resolvedHighlights.add(saved)
-                    pageView.setHighlights(
-                        active.resolvedHighlights.filter { it.pageIndex == currentPage }
+                    boundPageViews.entries.firstOrNull {
+                        it.value.pageIndex == pageIndex
+                    }?.key?.setHighlights(
+                        active.resolvedHighlights.filter { it.pageIndex == pageIndex }
                     )
                     statusText.text = "Highlight saved"
                 } else {
@@ -503,7 +614,8 @@ class MainActivity : Activity() {
             val note = if (item.note.isBlank()) "" else " — " + item.note
             val missing = if (resolved == null) " • location not found" else ""
             "Page " + pageNumber + ": " +
-                item.text.replace('\n', ' ').take(72) + note + missing
+                item.text.replace('
+', ' ').take(72) + note + missing
         }.toTypedArray()
 
         AlertDialog.Builder(this)
@@ -522,7 +634,13 @@ class MainActivity : Activity() {
                 currentPage = resolved.pageIndex.coerceIn(0, active.pages.lastIndex)
                 pendingHighlight = resolved
                 pendingSearchHit = null
-                renderCurrentPage()
+                pageList.scrollToPosition(currentPage)
+                val visible = boundPageViews.entries.firstOrNull {
+                    it.value.pageIndex == currentPage
+                }?.key
+                if (visible != null) {
+                    applyPendingPageState(currentPage, visible)
+                }
             }
             .setNegativeButton("Close", null)
             .show()
@@ -531,6 +649,9 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         val old = session
         session = null
+        releaseAllBoundPageViews()
+        pageList.adapter = null
+        pendingRenderKeys.clear()
         if (old != null) {
             io.execute {
                 try {
@@ -542,6 +663,11 @@ class MainActivity : Activity() {
         io.shutdown()
         super.onDestroy()
     }
+
+    private data class BoundPage(
+        val pageIndex: Int,
+        val cacheKey: String?
+    )
 
     private data class PdfSession(
         val document: PDDocument,
