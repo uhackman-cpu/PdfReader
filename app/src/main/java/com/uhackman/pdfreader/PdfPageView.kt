@@ -373,9 +373,9 @@ class PdfPageView @JvmOverloads constructor(
             zoom, offsetX, offsetY
         )
         val startX = start.x
-        val startY = start.y + 12f * density
+        val startY = start.y + 19f * density
         val endX = end.x
-        val endY = end.y + 12f * density
+        val endY = end.y + 19f * density
 
         val startDistance = (viewX - startX) * (viewX - startX) +
             (viewY - startY) * (viewY - startY)
