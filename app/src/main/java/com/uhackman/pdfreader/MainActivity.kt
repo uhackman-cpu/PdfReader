@@ -568,26 +568,19 @@ class MainActivity : Activity() {
         io.execute {
             val hits = mutableListOf<SearchHit>()
             try {
-                for (pageIndex in active.pages.indices) {
-                    val cached = active.pageTextCache.acquire(pageIndex)
-                    val pageText = cached ?: synchronized(active.document) {
-                        GlyphTextStripper().extractPage(active.document, pageIndex)
-                    }
-                    if (cached != null) {
-                        active.pageTextCache.release(pageIndex)
-                    } else {
+                synchronized(active.document) {
+                    GlyphTextStripper().forEachPage(active.document) { pageIndex, pageText ->
                         active.pageTextCache.put(pageIndex, pageText)
-                    }
-
-                    var from = 0
-                    while (from < pageText.text.length) {
-                        val found = pageText.text.indexOf(query, from, ignoreCase = true)
-                        if (found < 0) break
-                        val end = found + query.length
-                        if (pageText.glyphRangeForChars(found, end) != null) {
-                            hits.add(SearchHit(pageIndex, found, end))
+                        var from = 0
+                        while (from < pageText.text.length) {
+                            val found = pageText.text.indexOf(query, from, ignoreCase = true)
+                            if (found < 0) break
+                            val end = found + query.length
+                            if (pageText.glyphRangeForChars(found, end) != null) {
+                                hits.add(SearchHit(pageIndex, found, end))
+                            }
+                            from = found + max(1, query.length)
                         }
-                        from = found + max(1, query.length)
                     }
                 }
             } catch (error: Exception) {
@@ -759,21 +752,15 @@ class MainActivity : Activity() {
     private fun locateHighlightAndNavigate(active: PdfSession, saved: Highlight) {
         statusText.text = "Locating saved highlight across the document…"
         io.execute {
-            val pages = active.pages.indices.asSequence().map { pageIndex ->
-                val cached = active.pageTextCache.acquire(pageIndex)
-                if (cached != null) {
-                    active.pageTextCache.release(pageIndex)
-                    pageIndex to cached
-                } else {
-                    val extracted = synchronized(active.document) {
-                        GlyphTextStripper().extractPage(active.document, pageIndex)
-                    }
-                    active.pageTextCache.put(pageIndex, extracted)
-                    pageIndex to extracted
-                }
-            }
+            val resolver = HighlightAnchorResolver.streaming(saved)
             val anchor = try {
-                HighlightAnchorResolver.resolveInPages(pages, saved)
+                synchronized(active.document) {
+                    GlyphTextStripper().forEachPage(active.document) { pageIndex, pageText ->
+                        active.pageTextCache.put(pageIndex, pageText)
+                        resolver.accept(pageIndex, pageText)
+                    }
+                }
+                resolver.result()
             } catch (_: Exception) {
                 null
             }
