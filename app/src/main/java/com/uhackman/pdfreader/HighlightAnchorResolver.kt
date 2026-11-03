@@ -30,21 +30,42 @@ object HighlightAnchorResolver {
     fun resolveInDocument(
         pages: List<PageText>,
         highlight: Highlight
-    ): ResolvedHighlightAnchor? {
-        if (pages.isEmpty() || normalize(highlight.text).isEmpty()) return null
+    ): ResolvedHighlightAnchor? =
+        resolveInPages(pages.asSequence().mapIndexed { pageIndex, page ->
+            pageIndex to page
+        }, highlight)
 
-        val best = pages.mapIndexedNotNull { pageIndex, page ->
-            candidatesForPage(pageIndex, page, highlight).minWithOrNull(
+    /**
+     * Resolves against a streaming sequence so large documents do not need all
+     * extracted page text and glyph geometry resident in memory at once.
+     */
+    fun resolveInPages(
+        pages: Sequence<Pair<Int, PageText>>,
+        highlight: Highlight
+    ): ResolvedHighlightAnchor? {
+        if (normalize(highlight.text).isEmpty()) return null
+
+        var best: Candidate? = null
+        for ((pageIndex, page) in pages) {
+            val candidate = candidatesForPage(pageIndex, page, highlight).minWithOrNull(
                 compareByDescending<Candidate> { it.contextScore }
                     .thenBy { it.distance }
-            )
-        }.minWithOrNull(
-            compareByDescending<Candidate> { it.contextScore }
-                .thenBy { abs(it.pageIndex - highlight.pageIndex) }
-                .thenBy { it.distance }
-        ) ?: return null
+            ) ?: continue
+            val previous = best
+            val isBetter = previous == null ||
+                candidate.contextScore > previous.contextScore ||
+                (candidate.contextScore == previous.contextScore &&
+                    abs(candidate.pageIndex - highlight.pageIndex) <
+                    abs(previous.pageIndex - highlight.pageIndex)) ||
+                (candidate.contextScore == previous.contextScore &&
+                    abs(candidate.pageIndex - highlight.pageIndex) ==
+                    abs(previous.pageIndex - highlight.pageIndex) &&
+                    candidate.distance < previous.distance)
+            if (isBetter) best = candidate
+        }
 
-        return ResolvedHighlightAnchor(best.pageIndex, best.range)
+        val resolved = best ?: return null
+        return ResolvedHighlightAnchor(resolved.pageIndex, resolved.range)
     }
 
     private fun candidatesForPage(
