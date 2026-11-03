@@ -125,3 +125,19 @@ This establishes an anchor-resolution and fallback lifecycle at the Java/JNI bou
 The behavior needed to design an independent text-selection/highlight flow is now sufficiently specified: positioned text records, word/character selection modes, endpoint handles, cross-page selection data, text search and search rectangles, two-boundary persistent anchors with index/rectangle fallback, page-level highlight rectangles, document-wide annotation navigation, and the render/zoom interaction path are all covered by Java consumers and JNI contracts.
 
 The remaining unknowns are implementation internals rather than missing user-visible behavior: the exact native anchor-command handler and XPath grammar, its final glyph-to-rectangle algorithm, and the precise upstream PDF engine identity. The available wrapper disassembly does not establish these facts. Further guessing would be unsafe and is not required for an independent implementation using its own PDF text/layout engine. These points remain explicitly unverified.
+
+
+## 11. Page-normalized geometry and zoom transform — additional trace
+
+A targeted workflow reused the completed JADX artifact rather than repeating APK decompilation: [coordinate-transform trace run 41716068087](https://github.com/uhackman-cpu/PdfReader/actions/runs/41716068087). The extracted source windows are preserved in [READERA_PAGE_COORDINATE_TRANSFORM.md](READERA_PAGE_COORDINATE_TRANSFORM.md).
+
+The Java consumers establish the following coordinate contract:
+
+- `AbstractC2468y.m11551a(rect, pageRect)` treats each text/highlight rectangle as page-normalized: it multiplies left/right by the page rectangle width, top/bottom by its height, then offsets by the page rectangle's left/top.
+- `C2454k.mo11421c0()` performs the inverse transform for touch input. At base zoom it subtracts the page rectangle origin and divides by its width/height. At scaled zoom it uses the zoomed page rectangle returned by `C0823q.m5719p0(zoom)`.
+- `C0823q.m5721q0()` returns cached base page bounds at 1x. In vertical layout it scales all four page-bound coordinates by the zoom factor; horizontal/spread layout delegates to a separate layout helper.
+- `C3684b.mo15415k()` calls `JniDoc.m19131q()` / `pageGetSizeJni()` with an `int[2]`; on success it uses those two integers to construct the page-size object passed into page layout and rendering.
+
+No explicit CropBox/MediaBox or page-rotation adjustment appears in these Java coordinate consumers. The page dimensions and text rectangles arrive from the native document layer, so crop/rotation normalization is handled below this Java viewport transform or inside the native page geometry. The exact native crop/rotation calculation remains unverified.
+
+**Independent implementation consequence:** keep text geometry normalized to the same rendered-page rectangle, and use one forward transform for painting plus its exact inverse for hit-testing. Derive the rendered page aspect ratio from the PDF renderer's actual output (including page rotation), not from an assumed unrotated media box.
