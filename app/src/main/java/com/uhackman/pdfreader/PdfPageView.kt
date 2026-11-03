@@ -291,12 +291,18 @@ class PdfPageView @JvmOverloads constructor(
         overlayPaint.color = color
         for (index in first..last) {
             val glyph = currentPage.glyphs[index]
-            val left = pageRect.left + glyph.left * pageRect.width()
-            val top = pageRect.top + glyph.top * pageRect.height()
-            val right = pageRect.left + glyph.right * pageRect.width()
-            val bottom = pageRect.top + glyph.bottom * pageRect.height()
-            if (right > left && bottom > top) {
-                canvas.drawRect(left, top, right, bottom, overlayPaint)
+            val topLeft = PageCoordinateTransform.toView(
+                glyph.left, glyph.top,
+                pageRect.left, pageRect.top, pageRect.right, pageRect.bottom
+            )
+            val bottomRight = PageCoordinateTransform.toView(
+                glyph.right, glyph.bottom,
+                pageRect.left, pageRect.top, pageRect.right, pageRect.bottom
+            )
+            if (bottomRight.x > topLeft.x && bottomRight.y > topLeft.y) {
+                canvas.drawRect(
+                    topLeft.x, topLeft.y, bottomRight.x, bottomRight.y, overlayPaint
+                )
             }
         }
     }
@@ -308,10 +314,11 @@ class PdfPageView @JvmOverloads constructor(
     ): PointF {
         val glyph = page?.glyphs?.getOrNull(glyphIndex) ?: return PointF()
         val normalizedX = if (isStart) glyph.left else glyph.right
-        return PointF(
-            pageRect.left + normalizedX * pageRect.width(),
-            pageRect.top + glyph.bottom * pageRect.height()
+        val point = PageCoordinateTransform.toView(
+            normalizedX, glyph.bottom,
+            pageRect.left, pageRect.top, pageRect.right, pageRect.bottom
         )
+        return PointF(point.x, point.y)
     }
 
     private fun selectionHandleCenter(
@@ -353,12 +360,22 @@ class PdfPageView @JvmOverloads constructor(
         val touchRadius = 24f * density
         val radiusSquared = touchRadius * touchRadius
 
-        val start = selectionHandleCenter(range.first, true, rect)
-        val end = selectionHandleCenter(range.last, false, rect)
-        val startX = offsetX + start.x * zoom
-        val startY = offsetY + start.y * zoom
-        val endX = offsetX + end.x * zoom
-        val endY = offsetY + end.y * zoom
+        val startGlyph = page?.glyphs?.getOrNull(range.first) ?: return -1
+        val endGlyph = page?.glyphs?.getOrNull(range.last) ?: return -1
+        val start = PageCoordinateTransform.toScreen(
+            startGlyph.left, startGlyph.bottom,
+            rect.left, rect.top, rect.right, rect.bottom,
+            zoom, offsetX, offsetY
+        )
+        val end = PageCoordinateTransform.toScreen(
+            endGlyph.right, endGlyph.bottom,
+            rect.left, rect.top, rect.right, rect.bottom,
+            zoom, offsetX, offsetY
+        )
+        val startX = start.x
+        val startY = start.y + 12f * density
+        val endX = end.x
+        val endY = end.y + 12f * density
 
         val startDistance = (viewX - startX) * (viewX - startX) +
             (viewY - startY) * (viewY - startY)
@@ -395,15 +412,16 @@ class PdfPageView @JvmOverloads constructor(
         val rect = pageRect(image)
         if (rect.width() <= 0f || rect.height() <= 0f) return -1
 
-        val baseX = (viewX - offsetX) / zoom
-        val baseY = (viewY - offsetY) / zoom
-        val normalizedX = (baseX - rect.left) / rect.width()
-        val normalizedY = (baseY - rect.top) / rect.height()
-        if (normalizedX < -0.02f || normalizedX > 1.02f ||
-            normalizedY < -0.02f || normalizedY > 1.02f
+        val normalized = PageCoordinateTransform.toNormalized(
+            viewX, viewY,
+            rect.left, rect.top, rect.right, rect.bottom,
+            zoom, offsetX, offsetY
+        ) ?: return -1
+        if (normalized.x < -0.02f || normalized.x > 1.02f ||
+            normalized.y < -0.02f || normalized.y > 1.02f
         ) return -1
 
-        return glyphSpatialIndex.nearestGlyphIndex(normalizedX, normalizedY)
+        return glyphSpatialIndex.nearestGlyphIndex(normalized.x, normalized.y)
     }
 
     private fun notifySelection() {
