@@ -13,7 +13,9 @@ A native Android PDF reader built independently from documented PDF-reading beha
 - Restores saved highlights when a document is reopened.
 - Shows a document-wide highlights list; selecting an item jumps to its page.
 - Supports focus-aware pinch zoom and panning; after a zoom gesture it requests a sharper page render (up to 288 DPI, capped by a 12-megapixel page budget) without losing selection overlays.
-- Uses previous/next page navigation for this initial milestone. Continuous scrolling and richer selection handles are follow-up work.
+- Uses a continuous RecyclerView page stream with recycled page views, on-demand page rendering, and one-page prefetch around the viewport.
+- Keeps rendered bitmaps in a lease-aware 64 MiB LRU cache and extracted text/glyph geometry in a separate lease-aware 24 MiB weighted cache. Search and highlight restoration scan pages incrementally instead of retaining the whole document's glyph data.
+- Uses PDFRenderer's displayed crop-box dimensions (including 90/270 degree axis swaps) and page-rotation-adjusted TextPosition coordinates. Drawing and touch hit-testing share one forward/inverse normalized-page transform.
 
 Scanned PDFs containing only page images have no text layer in this milestone; OCR is not yet included.
 
@@ -29,6 +31,9 @@ The app uses PDFBox-Android, an Apache-2.0 Android port of Apache PDFBox. PDFRen
 - PdfPageView: draws the page, highlight overlays, search matches, selection, and handles zoom/pan/drag input.
 - PageText: maps character ranges to positioned glyph ranges.
 - HighlightStore: persists document-scoped annotations in SQLite.
-- MainActivity: document picker, page navigation, search, highlight list, and save-note flow.
+- PdfPageAdapter: recycled continuous page stream with per-page viewport sizing.
+- PageTextCache: bounded weighted cache for extracted text and glyph geometry.
+- PageBitmapCache: bounded lease-aware bitmap cache.
+- MainActivity: document picker, lazy page loading, streaming search, highlight list, and save-note flow.
 
 See docs/READERA_BEHAVIOR_SPEC.md for the evidence-based behavior model and remaining limits of the static analysis.

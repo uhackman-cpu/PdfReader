@@ -43,7 +43,9 @@ class MainActivity : Activity() {
     private val bitmapCache = PageBitmapCache()
     private val boundPageViews = mutableMapOf<PdfPageView, BoundPage>()
     private val pendingRenderKeys = mutableSetOf<String>()
+    private val pendingTextPageIndexes = mutableSetOf<String>()
     private val requestedRenderDpiByPage = mutableMapOf<Int, Float>()
+    private var searchGeneration = 0L
     private var selectedPageIndex = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -197,26 +199,17 @@ class MainActivity : Activity() {
                     ?: throw IllegalStateException("Unable to open the selected document")
                 val loadedDocument = input.use { PDDocument.load(it) }
                 document = loadedDocument
-                val stripper = GlyphTextStripper()
-                val pages = stripper.extract(loadedDocument)
+                val pages = GlyphTextStripper.describePages(loadedDocument)
                 val documentKey = uri.toString()
                 val storedHighlights = store.list(documentKey).toMutableList()
-                val resolvedHighlights = storedHighlights.mapNotNull { saved ->
-                    val anchor = HighlightAnchorResolver.resolveInDocument(pages, saved)
-                        ?: return@mapNotNull null
-                    saved.copy(
-                        pageIndex = anchor.pageIndex,
-                        startGlyph = anchor.glyphRange.first,
-                        endGlyph = anchor.glyphRange.last
-                    )
-                }.toMutableList()
                 val loaded = PdfSession(
                     document = loadedDocument,
                     renderer = PDFRenderer(loadedDocument),
                     pages = pages,
+                    pageTextCache = PageTextCache(),
                     documentKey = documentKey,
                     storedHighlights = storedHighlights,
-                    resolvedHighlights = resolvedHighlights
+                    resolvedHighlights = mutableListOf()
                 )
                 document = null
                 runOnUiThread {
@@ -225,6 +218,7 @@ class MainActivity : Activity() {
                     } catch (_: Exception) {
                     }
                     releaseAllBoundPageViews()
+                    previous?.pageTextCache?.clear()
                     pageList.adapter = null
                     session = loaded
                     currentPage = 0
@@ -236,6 +230,8 @@ class MainActivity : Activity() {
                     searchHitIndex = -1
                     requestedRenderDpiByPage.clear()
                     pendingRenderKeys.clear()
+                    pendingTextPageIndexes.clear()
+                    searchGeneration++
                     pageAdapter = PdfPageAdapter(
                         pageCount = loaded.pages.size,
                         pageAspectRatio = { index ->
@@ -245,12 +241,15 @@ class MainActivity : Activity() {
                         onPageBound = { index, view -> bindPage(index, view) },
                         onPageRecycled = { _, view -> releasePageView(view) },
                         onSelectionChanged = { index, start, end ->
-                            val page = loaded.pages.getOrNull(index)
-                            if (page != null) {
+                            val pageView = boundPageViews.entries.firstOrNull {
+                                it.value.pageIndex == index
+                            }?.key
+                            val selectedText = pageView?.textForGlyphRange(start, end)
+                            if (selectedText != null) {
                                 selectedPageIndex = index
                                 selectedRange = minOf(start, end)..maxOf(start, end)
-                                selectedTextView.text = page.textForGlyphRange(start, end)
-                                highlightButton.isEnabled = selectedTextView.text.isNotBlank()
+                                selectedTextView.text = selectedText
+                                highlightButton.isEnabled = selectedText.isNotBlank()
                             }
                         },
                         onResolutionRequested = { index, dpi ->
@@ -259,7 +258,7 @@ class MainActivity : Activity() {
                     )
                     pageList.adapter = pageAdapter
                     pageInfo.text = "Page 1 / " + loaded.pages.size
-                    statusText.text = "Continuous scrolling • nearby pages render on demand"
+                    statusText.text = "Continuous scrolling • page text and rasters load on demand"
                     pageList.scrollToPosition(0)
                     updateVisiblePages()
                 }
@@ -278,8 +277,11 @@ class MainActivity : Activity() {
 
     private fun bindPage(pageIndex: Int, view: PdfPageView) {
         val active = session ?: return
-        val pageData = active.pages.getOrNull(pageIndex) ?: return
-        boundPageViews.remove(view)?.cacheKey?.let(bitmapCache::release)
+        if (pageIndex !in active.pages.indices) return
+        boundPageViews.remove(view)?.let { previous ->
+            previous.cacheKey?.let(bitmapCache::release)
+            if (previous.textLease) previous.textCache?.release(previous.pageIndex)
+        }
 
         val requestedDpi = requestedRenderDpiByPage[pageIndex] ?: PdfPageView.BASE_RENDER_DPI
         var key = pageBitmapKey(active, pageIndex, requestedDpi)
@@ -288,14 +290,91 @@ class MainActivity : Activity() {
             key = pageBitmapKey(active, pageIndex, PdfPageView.BASE_RENDER_DPI)
             cached = bitmapCache.acquire(key)
         }
-        boundPageViews[view] = BoundPage(pageIndex, if (cached != null) key else null)
+        val pageText = active.pageTextCache.acquire(pageIndex)
+        boundPageViews[view] = BoundPage(
+            pageIndex = pageIndex,
+            cacheKey = if (cached != null) key else null,
+            textCache = active.pageTextCache,
+            textLease = pageText != null
+        )
         view.setPage(
-            pageData,
+            pageText,
             cached,
             active.resolvedHighlights.filter { it.pageIndex == pageIndex }
         )
+        if (pageText != null) {
+            resolveStoredHighlightsForPage(active, pageIndex, pageText)
+            view.setHighlights(active.resolvedHighlights.filter { it.pageIndex == pageIndex })
+        } else {
+            requestPageText(pageIndex)
+        }
         applyPendingPageState(pageIndex, view)
         if (cached == null) requestPageRender(pageIndex, requestedDpi)
+    }
+
+    private fun requestPageText(pageIndex: Int) {
+        val active = session ?: return
+        if (pageIndex !in active.pages.indices || active.pageTextCache.contains(pageIndex)) return
+        val requestKey = active.documentKey + "|" + pageIndex
+        if (!pendingTextPageIndexes.add(requestKey)) return
+
+        io.execute {
+            val extracted = try {
+                synchronized(active.document) {
+                    GlyphTextStripper().extractPage(active.document, pageIndex)
+                }
+            } catch (error: Exception) {
+                null
+            }
+            runOnUiThread {
+                pendingTextPageIndexes.remove(requestKey)
+                if (session !== active) return@runOnUiThread
+                if (extracted == null) {
+                    statusText.text = "Text extraction failed on page " + (pageIndex + 1)
+                    return@runOnUiThread
+                }
+
+                val cached = active.pageTextCache.put(pageIndex, extracted)
+                val targets = boundPageViews.entries.filter { it.value.pageIndex == pageIndex }
+                for ((view, binding) in targets) {
+                    if (binding.textLease) binding.textCache?.release(pageIndex)
+                    val leased = if (cached) active.pageTextCache.acquire(pageIndex) else null
+                    val pageText = leased ?: extracted
+                    view.setPageText(pageText)
+                    boundPageViews[view] = binding.copy(
+                        textCache = active.pageTextCache,
+                        textLease = leased != null
+                    )
+                    resolveStoredHighlightsForPage(active, pageIndex, pageText)
+                    view.setHighlights(active.resolvedHighlights.filter { it.pageIndex == pageIndex })
+                    applyPendingPageState(pageIndex, view)
+                }
+            }
+        }
+    }
+
+    private fun resolveStoredHighlightsForPage(
+        active: PdfSession,
+        pageIndex: Int,
+        pageText: PageText
+    ) {
+        val unresolved = active.storedHighlights.filter { saved ->
+            saved.pageIndex == pageIndex &&
+                active.resolvedHighlights.none { it.id == saved.id }
+        }
+        for (saved in unresolved) {
+            val anchor = HighlightAnchorResolver.resolveInPages(
+                sequenceOf(pageIndex to pageText),
+                saved
+            ) ?: continue
+            active.resolvedHighlights.add(
+                saved.copy(
+                    pageIndex = anchor.pageIndex,
+                    startGlyph = anchor.glyphRange.first,
+                    endGlyph = anchor.glyphRange.last
+                )
+            )
+        }
     }
 
     private fun applyPendingPageState(pageIndex: Int, view: PdfPageView) {
@@ -316,12 +395,14 @@ class MainActivity : Activity() {
     private fun releasePageView(view: PdfPageView) {
         val bound = boundPageViews.remove(view) ?: return
         bound.cacheKey?.let(bitmapCache::release)
+        if (bound.textLease) bound.textCache?.release(bound.pageIndex)
     }
 
     private fun releaseAllBoundPageViews() {
         boundPageViews.toList().forEach { (view, bound) ->
             view.clearPage()
             bound.cacheKey?.let(bitmapCache::release)
+            if (bound.textLease) bound.textCache?.release(bound.pageIndex)
         }
         boundPageViews.clear()
         bitmapCache.clear()
@@ -389,20 +470,12 @@ class MainActivity : Activity() {
         val oldBinding = entry.value
         if (oldBinding.cacheKey == key) return
         val image = bitmapCache.acquire(key) ?: return
-        val pageData = active.pages.getOrNull(pageIndex) ?: run {
+        if (active.pages.getOrNull(pageIndex) == null) {
             bitmapCache.release(key)
             return
         }
-        if (dpi <= PdfPageView.BASE_RENDER_DPI * 1.01f) {
-            view.setPage(
-                pageData,
-                image,
-                active.resolvedHighlights.filter { it.pageIndex == pageIndex }
-            )
-        } else {
-            view.replaceBitmap(image)
-        }
-        boundPageViews[view] = BoundPage(pageIndex, key)
+        view.replaceBitmap(image)
+        boundPageViews[view] = oldBinding.copy(cacheKey = key)
         oldBinding.cacheKey?.let(bitmapCache::release)
         applyPendingPageState(pageIndex, view)
     }
@@ -420,6 +493,7 @@ class MainActivity : Activity() {
         val preloadFirst = max(0, first - 1)
         val preloadLast = minOf(active.pages.lastIndex, last + 1)
         for (index in preloadFirst..preloadLast) {
+            requestPageText(index)
             val dpi = requestedRenderDpiByPage[index] ?: PdfPageView.BASE_RENDER_DPI
             requestPageRender(index, dpi)
         }
@@ -470,29 +544,58 @@ class MainActivity : Activity() {
             return
         }
 
-        val hits = mutableListOf<SearchHit>()
-        active.pages.forEachIndexed { pageIndex, page ->
-            var from = 0
-            while (from < page.text.length) {
-                val found = page.text.indexOf(query, from, ignoreCase = true)
-                if (found < 0) break
-                val end = found + query.length
-                if (page.glyphRangeForChars(found, end) != null) {
-                    hits.add(SearchHit(pageIndex, found, end))
+        val generation = ++searchGeneration
+        statusText.text = "Searching document text page by page…"
+        io.execute {
+            val hits = mutableListOf<SearchHit>()
+            try {
+                for (pageIndex in active.pages.indices) {
+                    val cached = active.pageTextCache.acquire(pageIndex)
+                    val pageText = cached ?: synchronized(active.document) {
+                        GlyphTextStripper().extractPage(active.document, pageIndex)
+                    }
+                    if (cached != null) {
+                        active.pageTextCache.release(pageIndex)
+                    } else {
+                        active.pageTextCache.put(pageIndex, pageText)
+                    }
+
+                    var from = 0
+                    while (from < pageText.text.length) {
+                        val found = pageText.text.indexOf(query, from, ignoreCase = true)
+                        if (found < 0) break
+                        val end = found + query.length
+                        if (pageText.glyphRangeForChars(found, end) != null) {
+                            hits.add(SearchHit(pageIndex, found, end))
+                        }
+                        from = found + max(1, query.length)
+                    }
                 }
-                from = found + max(1, query.length)
+            } catch (error: Exception) {
+                runOnUiThread {
+                    if (session === active && searchGeneration == generation) {
+                        statusText.text = "Search failed: " +
+                            (error.message ?: error.javaClass.simpleName)
+                    }
+                }
+                return@execute
+            }
+
+            runOnUiThread {
+                if (session !== active || searchGeneration != generation) return@runOnUiThread
+                searchHits = hits
+                searchHitIndex = if (hits.isEmpty()) -1 else 0
+                if (hits.isEmpty()) {
+                    statusText.text = "No text matches found."
+                    clearVisibleSelections()
+                    return@runOnUiThread
+                }
+                showSearchHit(hits[0])
+                pageInfo.text = "Page " + (hits[0].pageIndex + 1) + " / " +
+                    active.pages.size + " • " + hits.size + " matches"
+                statusText.text = "Found " + hits.size + " matches"
             }
         }
-        searchHits = hits
-        searchHitIndex = if (hits.isEmpty()) -1 else 0
-        if (hits.isEmpty()) {
-            statusText.text = "No text matches found."
-            clearVisibleSelections()
-            return
-        }
-        showSearchHit(hits[0])
-        pageInfo.text = "Page " + (hits[0].pageIndex + 1) + " / " +
-            active.pages.size + " • " + hits.size + " matches"
     }
 
     private fun nextSearchHit() {
@@ -526,7 +629,9 @@ class MainActivity : Activity() {
         val active = session ?: return
         val range = selectedRange ?: return
         val pageIndex = selectedPageIndex
-        val page = active.pages.getOrNull(pageIndex) ?: return
+        val page = boundPageViews.entries.firstOrNull {
+            it.value.pageIndex == pageIndex
+        }?.key?.getPageText() ?: return
         val selectedText = page.textForGlyphRange(range.first, range.last)
         if (selectedText.isBlank()) return
 
@@ -612,9 +717,9 @@ class MainActivity : Activity() {
             val resolved = resolvedById[item.id]
             val pageNumber = (resolved?.pageIndex ?: item.pageIndex) + 1
             val note = if (item.note.isBlank()) "" else " — " + item.note
-            val missing = if (resolved == null) " • location not found" else ""
+            val pending = if (resolved == null) " • location will be searched" else ""
             "Page " + pageNumber + ": " +
-                item.text.replace('\n', ' ').take(72) + note + missing
+                item.text.replace('\n', ' ').take(72) + note + pending
         }.toTypedArray()
 
         AlertDialog.Builder(this)
@@ -623,34 +728,80 @@ class MainActivity : Activity() {
                 val selected = items[which]
                 val resolved = resolvedById[selected.id]
                 if (resolved == null) {
-                    Toast.makeText(
-                        this,
-                        "The saved text could not be located in this PDF.",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    return@setItems
-                }
-                currentPage = resolved.pageIndex.coerceIn(0, active.pages.lastIndex)
-                pendingHighlight = resolved
-                pendingSearchHit = null
-                pageList.scrollToPosition(currentPage)
-                val visible = boundPageViews.entries.firstOrNull {
-                    it.value.pageIndex == currentPage
-                }?.key
-                if (visible != null) {
-                    applyPendingPageState(currentPage, visible)
+                    locateHighlightAndNavigate(active, selected)
+                } else {
+                    navigateToResolvedHighlight(active, resolved)
                 }
             }
             .setNegativeButton("Close", null)
             .show()
     }
 
+    private fun locateHighlightAndNavigate(active: PdfSession, saved: Highlight) {
+        statusText.text = "Locating saved highlight across the document…"
+        io.execute {
+            val pages = active.pages.indices.asSequence().map { pageIndex ->
+                val cached = active.pageTextCache.acquire(pageIndex)
+                if (cached != null) {
+                    active.pageTextCache.release(pageIndex)
+                    pageIndex to cached
+                } else {
+                    val extracted = synchronized(active.document) {
+                        GlyphTextStripper().extractPage(active.document, pageIndex)
+                    }
+                    active.pageTextCache.put(pageIndex, extracted)
+                    pageIndex to extracted
+                }
+            }
+            val anchor = try {
+                HighlightAnchorResolver.resolveInPages(pages, saved)
+            } catch (_: Exception) {
+                null
+            }
+            runOnUiThread {
+                if (session !== active) return@runOnUiThread
+                if (anchor == null) {
+                    Toast.makeText(
+                        this,
+                        "The saved text could not be located in this PDF.",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    statusText.text = "Saved highlight location not found"
+                    return@runOnUiThread
+                }
+                val resolved = saved.copy(
+                    pageIndex = anchor.pageIndex,
+                    startGlyph = anchor.glyphRange.first,
+                    endGlyph = anchor.glyphRange.last
+                )
+                active.resolvedHighlights.removeAll { it.id == resolved.id }
+                active.resolvedHighlights.add(resolved)
+                navigateToResolvedHighlight(active, resolved)
+            }
+        }
+    }
+
+    private fun navigateToResolvedHighlight(active: PdfSession, resolved: Highlight) {
+        currentPage = resolved.pageIndex.coerceIn(0, active.pages.lastIndex)
+        pendingHighlight = resolved
+        pendingSearchHit = null
+        pageList.scrollToPosition(currentPage)
+        val visible = boundPageViews.entries.firstOrNull {
+            it.value.pageIndex == currentPage
+        }?.key
+        if (visible != null) applyPendingPageState(currentPage, visible)
+        statusText.text = "Opened saved highlight"
+    }
+
     override fun onDestroy() {
         val old = session
         session = null
+        searchGeneration++
         releaseAllBoundPageViews()
         pageList.adapter = null
         pendingRenderKeys.clear()
+        pendingTextPageIndexes.clear()
+        old?.pageTextCache?.clear()
         if (old != null) {
             io.execute {
                 try {
@@ -665,13 +816,16 @@ class MainActivity : Activity() {
 
     private data class BoundPage(
         val pageIndex: Int,
-        val cacheKey: String?
+        val cacheKey: String?,
+        val textCache: PageTextCache?,
+        val textLease: Boolean
     )
 
     private data class PdfSession(
         val document: PDDocument,
         val renderer: PDFRenderer,
-        val pages: List<PageText>,
+        val pages: List<PageDescriptor>,
+        val pageTextCache: PageTextCache,
         val documentKey: String,
         val storedHighlights: MutableList<Highlight>,
         val resolvedHighlights: MutableList<Highlight>

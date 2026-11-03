@@ -1,5 +1,78 @@
 package com.uhackman.pdfreader
 
+data class CoordinatePoint(val x: Float, val y: Float)
+
+/**
+ * Shared normalized-page transform. Glyphs and saved highlight rectangles are
+ * stored in the rendered page's 0..1 coordinate space; touch input uses the
+ * exact inverse of the drawing transform, including zoom and pan.
+ */
+object PageCoordinateTransform {
+    fun toView(
+        normalizedX: Float,
+        normalizedY: Float,
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float
+    ): CoordinatePoint = CoordinatePoint(
+        left + normalizedX * (right - left),
+        top + normalizedY * (bottom - top)
+    )
+
+    fun toScreen(
+        normalizedX: Float,
+        normalizedY: Float,
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        zoom: Float,
+        offsetX: Float,
+        offsetY: Float
+    ): CoordinatePoint {
+        val view = toView(normalizedX, normalizedY, left, top, right, bottom)
+        return CoordinatePoint(offsetX + view.x * zoom, offsetY + view.y * zoom)
+    }
+
+    fun toNormalized(
+        screenX: Float,
+        screenY: Float,
+        left: Float,
+        top: Float,
+        right: Float,
+        bottom: Float,
+        zoom: Float,
+        offsetX: Float,
+        offsetY: Float
+    ): CoordinatePoint? {
+        if (!screenX.isFinite() || !screenY.isFinite() || !zoom.isFinite() ||
+            zoom <= 0f || !left.isFinite() || !top.isFinite() ||
+            !right.isFinite() || !bottom.isFinite() ||
+            right <= left || bottom <= top
+        ) return null
+
+        val viewX = (screenX - offsetX) / zoom
+        val viewY = (screenY - offsetY) / zoom
+        return CoordinatePoint(
+            (viewX - left) / (right - left),
+            (viewY - top) / (bottom - top)
+        )
+    }
+}
+
+/** Returns the dimensions PDFRenderer uses after applying page rotation. */
+fun displayedPageDimensions(
+    cropWidth: Float,
+    cropHeight: Float,
+    rotationDegrees: Int
+): CoordinatePoint {
+    val rotation = ((rotationDegrees % 360) + 360) % 360
+    val swap = rotation == 90 || rotation == 270
+    return if (swap) CoordinatePoint(cropHeight, cropWidth)
+    else CoordinatePoint(cropWidth, cropHeight)
+}
+
 data class Glyph(
     val left: Float,
     val top: Float,
