@@ -170,7 +170,8 @@ class PageTextTest {
         assertEquals(CoordinatePoint(800f, 600f), displayedPageDimensions(600f, 800f, 90))
         assertEquals(CoordinatePoint(600f, 800f), displayedPageDimensions(600f, 800f, 180))
         assertEquals(CoordinatePoint(800f, 600f), displayedPageDimensions(600f, 800f, 270))
-        assertEquals(CoordinatePoint(600f, 800f), displayedPageDimensions(600f, 800f, 450))
+        assertEquals(CoordinatePoint(800f, 600f), displayedPageDimensions(600f, 800f, 450))
+        assertEquals(CoordinatePoint(800f, 600f), displayedPageDimensions(600f, 800f, -90))
     }
 
     private fun pageFromText(text: String): PageText {
