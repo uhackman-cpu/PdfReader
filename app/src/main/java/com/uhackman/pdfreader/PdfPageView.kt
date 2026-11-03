@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.PointF
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.MotionEvent
@@ -32,6 +33,14 @@ class PdfPageView @JvmOverloads constructor(
         color = Color.DKGRAY
         textSize = 38f
     }
+    private val handleFillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.rgb(25, 118, 210)
+        style = Paint.Style.FILL
+    }
+    private val handleOutlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE
+        style = Paint.Style.STROKE
+    }
 
     private var zoom = 1f
     private var offsetX = 0f
@@ -39,6 +48,9 @@ class PdfPageView @JvmOverloads constructor(
     private var selecting = false
     private var panning = false
     private var selectionAnchor = -1
+    private var selectionFocus = -1
+    // 0 = lower text-unit endpoint, 1 = upper endpoint.
+    private var draggingEndpoint = -1
     private var lastTouchX = 0f
     private var lastTouchY = 0f
 
@@ -75,6 +87,8 @@ class PdfPageView @JvmOverloads constructor(
         searchRange = null
         selectionRange = null
         selectionAnchor = -1
+        selectionFocus = -1
+        draggingEndpoint = -1
         zoom = 1f
         offsetX = 0f
         offsetY = 0f
@@ -95,14 +109,20 @@ class PdfPageView @JvmOverloads constructor(
     }
 
     fun setSelectionRange(startGlyph: Int, endGlyph: Int) {
-        selectionRange = min(startGlyph, endGlyph)..max(startGlyph, endGlyph)
-        selectionAnchor = -1
+        val first = min(startGlyph, endGlyph)
+        val last = max(startGlyph, endGlyph)
+        selectionRange = first..last
+        selectionAnchor = first
+        selectionFocus = last
+        draggingEndpoint = -1
         invalidate()
     }
 
     fun clearSelection() {
         selectionRange = null
         selectionAnchor = -1
+        selectionFocus = -1
+        draggingEndpoint = -1
         invalidate()
     }
 
@@ -125,7 +145,12 @@ class PdfPageView @JvmOverloads constructor(
                 canvas,
                 rect,
                 highlight.startGlyph..highlight.endGlyph,
-                Color.argb(105, Color.red(highlight.color), Color.green(highlight.color), Color.blue(highlight.color))
+                Color.argb(
+                    105,
+                    Color.red(highlight.color),
+                    Color.green(highlight.color),
+                    Color.blue(highlight.color)
+                )
             )
         }
 
@@ -134,6 +159,7 @@ class PdfPageView @JvmOverloads constructor(
         }
         selectionRange?.let {
             drawGlyphRange(canvas, rect, it, Color.argb(120, 255, 152, 0))
+            drawSelectionHandles(canvas, rect, it)
         }
         canvas.restore()
     }
@@ -155,6 +181,82 @@ class PdfPageView @JvmOverloads constructor(
             if (right > left && bottom > top) {
                 canvas.drawRect(left, top, right, bottom, overlayPaint)
             }
+        }
+    }
+
+    private fun selectionHandleBasePoint(
+        glyphIndex: Int,
+        isStart: Boolean,
+        pageRect: RectF
+    ): PointF {
+        val glyph = page?.glyphs?.getOrNull(glyphIndex) ?: return PointF()
+        val normalizedX = if (isStart) glyph.left else glyph.right
+        return PointF(
+            pageRect.left + normalizedX * pageRect.width(),
+            pageRect.top + glyph.bottom * pageRect.height()
+        )
+    }
+
+    private fun selectionHandleCenter(
+        glyphIndex: Int,
+        isStart: Boolean,
+        pageRect: RectF
+    ): PointF {
+        val base = selectionHandleBasePoint(glyphIndex, isStart, pageRect)
+        val density = resources.displayMetrics.density
+        val radius = 7f * density / zoom
+        val stem = 12f * density / zoom
+        return PointF(base.x, base.y + stem + radius)
+    }
+
+    private fun drawSelectionHandles(canvas: Canvas, pageRect: RectF, range: IntRange) {
+        val density = resources.displayMetrics.density
+        val radius = 7f * density / zoom
+        val stem = 12f * density / zoom
+        handleOutlinePaint.strokeWidth = 2f * density / zoom
+
+        val endpoints = listOf(
+            range.first to true,
+            range.last to false
+        )
+        for ((glyphIndex, isStart) in endpoints) {
+            val base = selectionHandleBasePoint(glyphIndex, isStart, pageRect)
+            val center = selectionHandleCenter(glyphIndex, isStart, pageRect)
+            canvas.drawLine(base.x, base.y, base.x, base.y + stem, handleOutlinePaint)
+            canvas.drawCircle(center.x, center.y, radius, handleFillPaint)
+            canvas.drawCircle(center.x, center.y, radius, handleOutlinePaint)
+        }
+    }
+
+    private fun hitTestSelectionHandle(viewX: Float, viewY: Float): Int {
+        val range = selectionRange ?: return -1
+        val image = bitmap ?: return -1
+        val rect = pageRect(image)
+        val density = resources.displayMetrics.density
+        val touchRadius = 24f * density
+        val radiusSquared = touchRadius * touchRadius
+
+        val start = selectionHandleCenter(range.first, true, rect)
+        val end = selectionHandleCenter(range.last, false, rect)
+        val startX = offsetX + start.x * zoom
+        val startY = offsetY + start.y * zoom
+        val endX = offsetX + end.x * zoom
+        val endY = offsetY + end.y * zoom
+
+        val startDistance = (viewX - startX) * (viewX - startX) +
+            (viewY - startY) * (viewY - startY)
+        val endDistance = (viewX - endX) * (viewX - endX) +
+            (viewY - endY) * (viewY - endY)
+
+        val startHit = startDistance <= radiusSquared
+        val endHit = endDistance <= radiusSquared
+        if (!startHit && !endHit) return -1
+        return if (startHit && endHit) {
+            if (startDistance <= endDistance) 0 else 1
+        } else if (startHit) {
+            0
+        } else {
+            1
         }
     }
 
@@ -207,19 +309,52 @@ class PdfPageView @JvmOverloads constructor(
         onSelectionChanged?.invoke(range.first, range.last)
     }
 
+    private fun updateDraggedEndpoint(glyphIndex: Int) {
+        val range = selectionRange ?: return
+        if (draggingEndpoint == 0) {
+            if (glyphIndex <= range.last) {
+                selectionRange = glyphIndex..range.last
+            } else {
+                selectionRange = range.last..glyphIndex
+                draggingEndpoint = 1
+            }
+        } else if (draggingEndpoint == 1) {
+            if (glyphIndex >= range.first) {
+                selectionRange = range.first..glyphIndex
+            } else {
+                selectionRange = glyphIndex..range.first
+                draggingEndpoint = 0
+            }
+        }
+        selectionAnchor = selectionRange?.first ?: -1
+        selectionFocus = selectionRange?.last ?: -1
+        notifySelection()
+        invalidate()
+    }
+
     override fun onTouchEvent(event: MotionEvent): Boolean {
         scaleDetector.onTouchEvent(event)
         if (event.pointerCount > 1 || scaleDetector.isInProgress) {
             selecting = false
             panning = false
+            draggingEndpoint = -1
             return true
         }
 
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                val endpoint = hitTestSelectionHandle(event.x, event.y)
+                if (endpoint >= 0) {
+                    draggingEndpoint = endpoint
+                    selecting = false
+                    panning = false
+                    return true
+                }
+
                 val glyphIndex = hitTest(event.x, event.y)
                 if (glyphIndex >= 0) {
                     selectionAnchor = glyphIndex
+                    selectionFocus = glyphIndex
                     selectionRange = glyphIndex..glyphIndex
                     selecting = true
                     panning = false
@@ -235,10 +370,15 @@ class PdfPageView @JvmOverloads constructor(
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (selecting) {
+                if (draggingEndpoint >= 0) {
+                    val glyphIndex = hitTest(event.x, event.y)
+                    if (glyphIndex >= 0) updateDraggedEndpoint(glyphIndex)
+                } else if (selecting) {
                     val glyphIndex = hitTest(event.x, event.y)
                     if (glyphIndex >= 0) {
-                        selectionRange = min(selectionAnchor, glyphIndex)..max(selectionAnchor, glyphIndex)
+                        selectionFocus = glyphIndex
+                        selectionRange = min(selectionAnchor, selectionFocus)..
+                            max(selectionAnchor, selectionFocus)
                         notifySelection()
                         invalidate()
                     }
@@ -255,6 +395,7 @@ class PdfPageView @JvmOverloads constructor(
             MotionEvent.ACTION_UP -> {
                 selecting = false
                 panning = false
+                draggingEndpoint = -1
                 performClick()
                 return true
             }
@@ -262,6 +403,7 @@ class PdfPageView @JvmOverloads constructor(
             MotionEvent.ACTION_CANCEL -> {
                 selecting = false
                 panning = false
+                draggingEndpoint = -1
                 return true
             }
         }
