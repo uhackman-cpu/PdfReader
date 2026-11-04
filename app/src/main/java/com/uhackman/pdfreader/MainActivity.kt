@@ -2,6 +2,8 @@ package com.uhackman.pdfreader
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Color
@@ -31,6 +33,9 @@ class MainActivity : Activity() {
     private lateinit var searchInput: EditText
     private lateinit var selectedTextView: TextView
     private lateinit var highlightButton: Button
+    private lateinit var copyButton: Button
+    private lateinit var textModeButton: Button
+    private lateinit var textModeView: SelectablePageTextView
 
     private var session: PdfSession? = null
     private var currentPage = 0
@@ -56,6 +61,10 @@ class MainActivity : Activity() {
     private var selectionFocus: SelectionEndpoint? = null
     private var activeSelectionGesture = false
     private var selectionRequestGeneration = 0L
+    private var textModeEnabled = false
+    private var textModePageIndex = -1
+    private var textModePageText: PageText? = null
+    private var selectedPlainText: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -79,6 +88,8 @@ class MainActivity : Activity() {
         toolbar.addView(makeButton("Prev") { changePage(-1) }, weightedButtonParams())
         toolbar.addView(makeButton("Next") { changePage(1) }, weightedButtonParams())
         toolbar.addView(makeButton("Highlights") { showHighlights() }, weightedButtonParams())
+        textModeButton = makeButton("Text mode") { toggleTextMode() }
+        toolbar.addView(textModeButton, weightedButtonParams())
         root.addView(toolbar, LinearLayout.LayoutParams(
             ViewGroup.LayoutParams.MATCH_PARENT,
             ViewGroup.LayoutParams.WRAP_CONTENT
@@ -131,6 +142,18 @@ class MainActivity : Activity() {
             1f
         ))
 
+        textModeView = SelectablePageTextView(this).apply {
+            visibility = View.GONE
+            onPageTextSelectionChanged = { index, start, end ->
+                handleNativeTextSelection(index, start, end)
+            }
+        }
+        root.addView(textModeView, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT,
+            0,
+            1f
+        ))
+
         statusText = TextView(this).apply {
             text = "Open a text-based PDF. Long-press a word or drag across text to select it."
             setTextColor(Color.DKGRAY)
@@ -149,8 +172,12 @@ class MainActivity : Activity() {
             textSize = 13f
             maxLines = 2
             setPadding(4, 4, 4, 4)
+            setTextIsSelectable(true)
         }
         selectionRow.addView(selectedTextView, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        copyButton = makeButton("Copy") { copySelectedText() }
+        copyButton.isEnabled = false
+        selectionRow.addView(copyButton)
         highlightButton = makeButton("Highlight") { saveHighlight() }
         highlightButton.isEnabled = false
         selectionRow.addView(highlightButton)
@@ -171,6 +198,106 @@ class MainActivity : Activity() {
             textSize = 12f
             setOnClickListener { action() }
         }
+
+    private fun toggleTextMode() {
+        if (session == null) {
+            Toast.makeText(this, "Open a PDF first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        textModeEnabled = !textModeEnabled
+        pageList.visibility = if (textModeEnabled) View.GONE else View.VISIBLE
+        textModeView.visibility = if (textModeEnabled) View.VISIBLE else View.GONE
+        textModeButton.text = if (textModeEnabled) "Page view" else "Text mode"
+        if (textModeEnabled) {
+            statusText.text = "Native text mode • long-press, drag to select, then use Android Copy"
+            showTextModePage(currentPage)
+        } else {
+            textModeView.clearPage()
+            textModePageIndex = -1
+            textModePageText = null
+            statusText.text = "PDF page view • positioned text selection remains available"
+            updateVisiblePages()
+        }
+    }
+
+    private fun showTextModePage(
+        pageIndex: Int,
+        suppliedPageText: PageText? = null,
+        selectStart: Int? = null,
+        selectEnd: Int? = null
+    ) {
+        val active = session ?: return
+        if (pageIndex !in active.pages.indices) return
+        currentPage = pageIndex
+        pageInfo.text = "Page " + (pageIndex + 1) + " / " + active.pages.size + " • Text mode"
+
+        var pageText = suppliedPageText
+        if (pageText == null) {
+            pageText = active.pageTextCache.acquire(pageIndex)
+            if (pageText != null) active.pageTextCache.release(pageIndex)
+        }
+        if (pageText == null) {
+            textModePageIndex = -1
+            textModePageText = null
+            textModeView.showLoading(pageIndex)
+            statusText.text = "Extracting real PDF text for page " + (pageIndex + 1) + "…"
+            requestPageText(pageIndex)
+            return
+        }
+
+        textModePageIndex = pageIndex
+        textModePageText = pageText
+        textModeView.showPage(pageIndex, pageText)
+        if (pageText.text.isBlank() || pageText.glyphs.isEmpty()) {
+            textModeView.showMessage(
+                pageIndex,
+                "No embedded text was found on this page. It may be a scanned/image-only page; OCR is not available yet."
+            )
+            statusText.text = "No selectable embedded text on page " + (pageIndex + 1)
+        } else {
+            statusText.text = "Native selectable text • " + pageText.text.length +
+                " characters • " + pageText.glyphs.size + " positioned text units"
+            if (selectStart != null && selectEnd != null) {
+                textModeView.selectText(selectStart, selectEnd)
+            }
+        }
+    }
+
+    private fun handleNativeTextSelection(pageIndex: Int, start: Int, end: Int) {
+        if (!textModeEnabled || pageIndex != currentPage ||
+            pageIndex != textModePageIndex
+        ) return
+        val page = textModePageText ?: return
+        val first = minOf(start, end).coerceIn(0, page.text.length)
+        val last = maxOf(start, end).coerceIn(first, page.text.length)
+        val range = page.glyphRangeForChars(first, last) ?: return
+        val selected = page.text.substring(first, last).trim()
+        if (selected.isBlank()) return
+
+        documentSelection = null
+        selectionAnchor = null
+        selectionFocus = null
+        activeSelectionGesture = false
+        selectionRequestGeneration++
+        selectedPageIndex = pageIndex
+        selectedRange = range
+        selectedPlainText = selected
+        selectedTextView.text = selected
+        copyButton.isEnabled = true
+        highlightButton.isEnabled = true
+        statusText.text = "Selected real PDF text • " + selected.length + " characters"
+    }
+
+    private fun copySelectedText() {
+        val text = documentSelection?.selectedText ?: selectedPlainText.orEmpty()
+        if (text.isBlank()) {
+            Toast.makeText(this, "Select PDF text first", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val clipboard = getSystemService(CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(ClipData.newPlainText("PDF text", text))
+        Toast.makeText(this, "Copied " + text.length + " characters", Toast.LENGTH_SHORT).show()
+    }
 
     private fun choosePdf() {
         val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -230,6 +357,15 @@ class MainActivity : Activity() {
                     previous?.pageTextCache?.clear()
                     pageList.adapter = null
                     session = loaded
+                    textModeEnabled = false
+                    textModePageIndex = -1
+                    textModePageText = null
+                    selectedPlainText = null
+                    pageList.visibility = View.VISIBLE
+                    textModeView.visibility = View.GONE
+                    textModeView.clearPage()
+                    textModeButton.text = "Text mode"
+                    copyButton.isEnabled = false
                     currentPage = 0
                     selectedPageIndex = -1
                     selectedRange = null
@@ -266,7 +402,9 @@ class MainActivity : Activity() {
                             if (selectedText != null) {
                                 selectedPageIndex = index
                                 selectedRange = minOf(start, end)..maxOf(start, end)
+                                selectedPlainText = selectedText
                                 selectedTextView.text = selectedText
+                                copyButton.isEnabled = selectedText.isNotBlank()
                                 highlightButton.isEnabled = selectedText.isNotBlank()
                             }
                         },
@@ -374,6 +512,9 @@ class MainActivity : Activity() {
                 }
 
                 active.pageTextCache.put(pageIndex, extracted)
+                if (textModeEnabled && currentPage == pageIndex) {
+                    showTextModePage(pageIndex, extracted)
+                }
                 attachPageTextToBoundViews(active, pageIndex, extracted)
             }
         }
@@ -467,6 +608,8 @@ class MainActivity : Activity() {
             selectedPageIndex = pageIndex
             selectedRange = item.startGlyph..item.endGlyph
             selectedTextView.text = item.text
+            selectedPlainText = item.text
+            copyButton.isEnabled = true
             highlightButton.isEnabled = true
             pendingHighlight = null
         }
@@ -770,7 +913,10 @@ class MainActivity : Activity() {
         selectedRange = null
         selectedPageIndex = -1
         selectedTextView.text = "Selected text will appear here"
+        selectedPlainText = null
+        copyButton.isEnabled = false
         highlightButton.isEnabled = false
+        textModeView.clearNativeSelection()
     }
 
     private fun handleDocumentSelectionGesture(event: SelectionGestureEvent) {
@@ -791,6 +937,8 @@ class MainActivity : Activity() {
             activeSelectionGesture = true
             selectedRange = null
             selectedPageIndex = -1
+            selectedPlainText = null
+            copyButton.isEnabled = false
             highlightButton.isEnabled = false
         }
         val anchor = selectionAnchor ?: return
@@ -910,6 +1058,8 @@ class MainActivity : Activity() {
             selectedTextView.text = "Selecting pages " +
                 (firstPage + 1) + "–" + (lastPage + 1) + "…"
         }
+        selectedPlainText = null
+        copyButton.isEnabled = false
         highlightButton.isEnabled = false
     }
 
@@ -941,6 +1091,8 @@ class MainActivity : Activity() {
                 if (resolved == null) {
                     documentSelection = null
                     selectedTextView.text = "Could not resolve selected text"
+                    selectedPlainText = null
+                    copyButton.isEnabled = false
                     highlightButton.isEnabled = false
                     statusText.text = "Cross-page selection could not be resolved"
                     return@runOnUiThread
@@ -962,6 +1114,8 @@ class MainActivity : Activity() {
                     )
                 }
                 selectedTextView.text = resolved.selectedText
+                selectedPlainText = resolved.selectedText
+                copyButton.isEnabled = resolved.selectedText.isNotBlank()
                 highlightButton.isEnabled = resolved.ranges.isNotEmpty()
                 statusText.text = "Selected across " + resolved.ranges.size + " page(s)"
             }
@@ -999,7 +1153,7 @@ class MainActivity : Activity() {
         val next = currentPage + delta
         if (next !in active.pages.indices) return
         currentPage = next
-        pageList.smoothScrollToPosition(next)
+        if (textModeEnabled) showTextModePage(next) else pageList.smoothScrollToPosition(next)
     }
 
     private fun findText() {
@@ -1096,6 +1250,11 @@ class MainActivity : Activity() {
         clearVisibleSelections()
         currentPage = hit.pageIndex
         pendingHighlight = null
+        if (textModeEnabled) {
+            pendingSearchHit = null
+            showTextModePage(hit.pageIndex, selectStart = hit.startChar, selectEnd = hit.endChar)
+            return
+        }
         pendingSearchHit = hit
         pageList.scrollToPosition(hit.pageIndex)
         val visible = boundPageViews.entries.firstOrNull {
@@ -1161,9 +1320,10 @@ class MainActivity : Activity() {
         }
         val range = selectedRange ?: return
         val pageIndex = selectedPageIndex
-        val page = boundPageViews.entries.firstOrNull {
-            it.value.pageIndex == pageIndex
-        }?.key?.getPageText() ?: return
+        val page = textModePageText?.takeIf { textModePageIndex == pageIndex } ?:
+            boundPageViews.entries.firstOrNull {
+                it.value.pageIndex == pageIndex
+            }?.key?.getPageText() ?: return
         val selectedText = page.textForGlyphRange(range.first, range.last)
         if (selectedText.isBlank()) return
 
@@ -1318,7 +1478,11 @@ class MainActivity : Activity() {
         currentPage = resolved.pageIndex.coerceIn(0, active.pages.lastIndex)
         pendingHighlight = resolved
         pendingSearchHit = null
-        pageList.scrollToPosition(currentPage)
+        if (textModeEnabled) {
+            showTextModePage(currentPage)
+        } else {
+            pageList.scrollToPosition(currentPage)
+        }
         val visible = boundPageViews.entries.firstOrNull {
             it.value.pageIndex == currentPage
         }?.key
