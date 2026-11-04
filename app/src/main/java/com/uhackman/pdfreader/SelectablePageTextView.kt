@@ -77,7 +77,7 @@ class SelectablePageTextView(context: Context) : TextView(context) {
     fun clearNativeSelection() {
         if (pageText == null) return
         suppressSelectionCallback = true
-        setSelection(0, 0)
+        setNativeSelection(0, 0)
         suppressSelectionCallback = false
     }
 
