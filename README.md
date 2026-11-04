@@ -5,6 +5,8 @@ A native Android PDF reader built independently from documented PDF-reading beha
 ## First working milestone
 
 - Opens PDFs through Android's document picker.
+- Offers a **Text mode** backed by the PDF's extracted text in a native Android selectable `TextView`: long-press, drag selection handles, Android's Copy action, and reflowable reading. The selected UTF-16 range maps back to the original PDF glyph range so it can be highlighted and annotated.
+- The page-layout mode still rasterizes the page for visual fidelity, while keeping a separate positioned text/glyph model for its custom selection overlays. Use Text mode for native Android text selection and copying.
 - Renders actual PDF pages with PDFBox-Android, not a screenshot-only page model.
 - Extracts selectable text positions; long-press selects a Unicode-aware word, finger-drag extends selection, and endpoint handles refine it.
 - Uses a per-page spatial index for responsive glyph hit-testing on dense text pages.
@@ -29,6 +31,7 @@ The app uses PDFBox-Android, an Apache-2.0 Android port of Apache PDFBox. PDFRen
 
 - PdfTextExtractor: extracts per-glyph text and normalized rectangles.
 - PdfPageView: draws the page, highlight overlays, search matches, selection, and handles zoom/pan/drag input.
+- SelectablePageTextView: native reflowable Android text surface with system selection handles and Copy actions.
 - PageText: maps character ranges to positioned glyph ranges.
 - HighlightStore: persists document-scoped annotations in SQLite.
 - PdfPageAdapter: recycled continuous page stream with per-page viewport sizing.
