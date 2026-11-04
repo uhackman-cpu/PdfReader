@@ -2,6 +2,8 @@ package com.uhackman.pdfreader
 
 import android.content.Context
 import android.graphics.Color
+import android.text.Selection
+import android.text.Spannable
 import android.view.Gravity
 import android.widget.TextView
 
@@ -41,7 +43,7 @@ class SelectablePageTextView(context: Context) : TextView(context) {
         pageIndex = index
         pageText = extracted
         text = extracted.text
-        setSelection(0, 0)
+        setNativeSelection(0, 0)
         scrollTo(0, 0)
         suppressSelectionCallback = false
     }
@@ -68,7 +70,7 @@ class SelectablePageTextView(context: Context) : TextView(context) {
         val last = end.coerceIn(first, value.length)
         if (last > first) {
             requestFocus()
-            setSelection(first, last)
+            setNativeSelection(first, last)
         }
     }
 
@@ -85,6 +87,11 @@ class SelectablePageTextView(context: Context) : TextView(context) {
         pageText = null
         text = ""
         suppressSelectionCallback = false
+    }
+
+    private fun setNativeSelection(start: Int, end: Int) {
+        val spannable = text as? Spannable ?: return
+        Selection.setSelection(spannable, start, end)
     }
 
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
