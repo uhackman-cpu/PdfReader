@@ -621,9 +621,13 @@ class MainActivity : Activity() {
 
         val prefix = pageBitmapKey(active, pageIndex, targetDpi) + "|tile|"
         val manifest = pageTileManifests[pageIndex]
-        if (manifest?.firstOrNull()?.key?.startsWith(prefix) == true &&
-            displayCachedTiles(active, pageIndex, targetDpi)
-        ) return
+        if (manifest?.firstOrNull()?.key?.startsWith(prefix) == true) {
+            val allTilesCached = manifest.all { bitmapCache.contains(it.key) }
+            val pageIsBound = boundPageViews.values.any { it.pageIndex == pageIndex }
+            if (allTilesCached &&
+                (!pageIsBound || displayCachedTiles(active, pageIndex, targetDpi))
+            ) return
+        }
 
         val requestKey = pageBitmapKey(active, pageIndex, targetDpi) + "|tiles"
         if (!pendingTileKeys.add(requestKey)) return
