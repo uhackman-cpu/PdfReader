@@ -33,7 +33,7 @@ class PdfPageView @JvmOverloads constructor(
 
     var onSelectionChanged: ((Int, Int) -> Unit)? = null
     var onDocumentSelectionGesture: ((SelectionGestureEvent) -> Unit)? = null
-    var onResolutionRequested: ((Float) -> Unit)? = null
+    var onResolutionRequested: ((Float, PageTileRegion) -> Unit)? = null
 
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val overlayPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -101,7 +101,7 @@ class PdfPageView @JvmOverloads constructor(
                 parent?.requestDisallowInterceptTouchEvent(false)
                 val targetDpi = (BASE_RENDER_DPI * zoom).coerceAtMost(MAX_RENDER_DPI)
                 if (targetDpi > BASE_RENDER_DPI * 1.25f) {
-                    onResolutionRequested?.invoke(targetDpi)
+                    onResolutionRequested?.invoke(targetDpi, visiblePageRegion() ?: PageTileRegion.FULL_PAGE)
                 }
             }
         }
@@ -493,6 +493,24 @@ class PdfPageView @JvmOverloads constructor(
         return RectF(left, top, left + pageWidth, top + pageHeight)
     }
 
+    /** Returns the normalized page area visible after the current zoom and pan. */
+    fun visiblePageRegion(): PageTileRegion? {
+        val image = bitmap ?: return null
+        val rect = pageRect(image)
+        if (rect.width() <= 0f || rect.height() <= 0f || zoom <= 0f) return null
+
+        val left = ((-offsetX) / zoom - rect.left) / rect.width()
+        val top = ((-offsetY) / zoom - rect.top) / rect.height()
+        val right = ((width.toFloat() - offsetX) / zoom - rect.left) / rect.width()
+        val bottom = ((height.toFloat() - offsetY) / zoom - rect.top) / rect.height()
+        val clippedLeft = left.coerceIn(0f, 1f)
+        val clippedTop = top.coerceIn(0f, 1f)
+        val clippedRight = right.coerceIn(0f, 1f)
+        val clippedBottom = bottom.coerceIn(0f, 1f)
+        if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) return null
+        return PageTileRegion(clippedLeft, clippedTop, clippedRight, clippedBottom)
+    }
+
     private fun hitTest(viewX: Float, viewY: Float): Int {
         val currentPage = page ?: return -1
         val image = bitmap ?: return -1
@@ -658,6 +676,13 @@ class PdfPageView @JvmOverloads constructor(
                     lastTouchX = event.x
                     lastTouchY = event.y
                     invalidate()
+                    if (zoom > 1.01f) {
+                        val targetDpi = (BASE_RENDER_DPI * zoom).coerceAtMost(MAX_RENDER_DPI)
+                        onResolutionRequested?.invoke(
+                            targetDpi,
+                            visiblePageRegion() ?: PageTileRegion.FULL_PAGE
+                        )
+                    }
                 } else if (pendingTextPress && !selecting) {
                     when (GestureArbitration.classify(
                         event.x - downX, event.y - downY, touchSlop
