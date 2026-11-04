@@ -315,7 +315,7 @@ object RenderDpiPolicy {
         return minOf(desired, maxDpi.coerceAtLeast(MIN_DPI))
     }
 
-    /** Keeps the temporary full-page raster used for tile splitting below 8 MP. */
+    /** Caps the logical high-resolution page dimensions used to plan tiles below 8 MP. */
     fun capForTiles(widthPoints: Float, heightPoints: Float, requestedDpi: Float): Float {
         val capped = cap(widthPoints, heightPoints, requestedDpi)
         if (!widthPoints.isFinite() || !heightPoints.isFinite() ||

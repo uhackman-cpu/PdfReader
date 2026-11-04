@@ -12,7 +12,7 @@ A native Android PDF reader built independently from documented PDF-reading beha
 - Saves highlights and optional notes in local SQLite, keyed to the selected document URI.
 - Restores saved highlights when a document is reopened.
 - Shows a document-wide highlights list; selecting an item jumps to its page.
-- Supports focus-aware pinch zoom and panning; after a zoom gesture it requests a sharper page render (up to 288 DPI, capped by a 12-megapixel page budget) without losing selection overlays.
+- Supports focus-aware pinch zoom and panning; after a zoom gesture it requests sharper page tiles (up to 288 DPI) without losing selection overlays. At high zoom, only tiles intersecting the visible page viewport plus a one-tile prefetch margin are rendered directly into tile-sized bitmaps through PDFRenderer.renderPageToGraphics; panning requests newly visible tiles. No intermediate full-page high-resolution bitmap is allocated.
 - Uses a continuous RecyclerView page stream with recycled page views, on-demand page rendering, and one-page prefetch around the viewport.
 - Keeps rendered bitmaps in a lease-aware 64 MiB LRU cache and extracted text/glyph geometry in a separate lease-aware 24 MiB weighted cache. Search and highlight restoration scan pages incrementally instead of retaining the whole document's glyph data.
 - Uses PDFRenderer's displayed crop-box dimensions (including 90/270 degree axis swaps) and page-rotation-adjusted TextPosition coordinates. Drawing and touch hit-testing share one forward/inverse normalized-page transform.
@@ -33,7 +33,8 @@ The app uses PDFBox-Android, an Apache-2.0 Android port of Apache PDFBox. PDFRen
 - HighlightStore: persists document-scoped annotations in SQLite.
 - PdfPageAdapter: recycled continuous page stream with per-page viewport sizing.
 - PageTextCache: bounded weighted cache for extracted text and glyph geometry.
-- PageBitmapCache: bounded lease-aware bitmap cache.
+- PageBitmapCache: bounded lease-aware bitmap cache for base pages and visible high-resolution tiles.
+- PdfRegionTileRenderer: renders requested 512-pixel viewport tiles directly into small bitmaps using PDFRenderer's crop/rotation-aware page transform.
 - MainActivity: document picker, lazy page loading, streaming search, highlight list, and save-note flow.
 
 See docs/READERA_BEHAVIOR_SPEC.md for the evidence-based behavior model and remaining limits of the static analysis.

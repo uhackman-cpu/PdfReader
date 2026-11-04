@@ -44,7 +44,7 @@ class MainActivity : Activity() {
     private val boundPageViews = mutableMapOf<PdfPageView, BoundPage>()
     private val pendingRenderKeys = mutableSetOf<String>()
     private val pendingTileKeys = mutableSetOf<String>()
-    private val pageTileManifests = mutableMapOf<Int, List<CachedPageTile>>()
+    private val pageTileManifests = mutableMapOf<String, MutableMap<PageTileBounds, CachedPageTile>>()
     private val pendingTextPageIndexes = mutableSetOf<String>()
     private val requestedRenderDpiByPage = mutableMapOf<Int, Float>()
     private var totalSearchHitCount = 0L
@@ -273,8 +273,8 @@ class MainActivity : Activity() {
                         onDocumentSelectionGesture = { _, event ->
                             handleDocumentSelectionGesture(event)
                         },
-                        onResolutionRequested = { index, dpi ->
-                            requestSharperPage(index, dpi)
+                        onResolutionRequested = { index, dpi, region ->
+                            requestSharperPage(index, dpi, region)
                         }
                     )
                     pageList.adapter = pageAdapter
@@ -331,8 +331,10 @@ class MainActivity : Activity() {
         applyPendingPageState(pageIndex, view)
         applySelectionToBoundPage(pageIndex, view)
         if (requestedDpi > baseDpi * 1.08f) {
-            if (!displayCachedTiles(active, pageIndex, requestedDpi)) {
-                requestPageTiles(pageIndex, requestedDpi)
+            view.visiblePageRegion()?.let { visibleRegion ->
+                if (!displayCachedTiles(active, pageIndex, requestedDpi, visibleRegion)) {
+                    requestPageTiles(pageIndex, requestedDpi, visibleRegion)
+                }
             }
         }
         if (cached == null) requestPageRender(pageIndex, baseDpi)
@@ -475,6 +477,7 @@ class MainActivity : Activity() {
         bound.cacheKey?.let(bitmapCache::release)
         bound.tileKeys.forEach(bitmapCache::release)
         if (bound.textLease) bound.textCache?.release(bound.pageIndex)
+        requestedRenderDpiByPage.remove(bound.pageIndex)
     }
 
     private fun releaseAllBoundPageViews() {
@@ -500,6 +503,12 @@ class MainActivity : Activity() {
         bounds: PageTileBounds
     ): String = pageBitmapKey(active, pageIndex, dpi) +
         "|tile|" + bounds.leftPx + "|" + bounds.topPx
+
+    private fun pageTileManifestKey(
+        active: PdfSession,
+        pageIndex: Int,
+        dpi: Float
+    ): String = pageBitmapKey(active, pageIndex, dpi) + "|tiles"
 
     private fun requestPageRender(pageIndex: Int, requestedDpi: Float) {
         val active = session ?: return
@@ -573,25 +582,36 @@ class MainActivity : Activity() {
     private fun displayCachedTiles(
         active: PdfSession,
         pageIndex: Int,
-        dpi: Float
+        dpi: Float,
+        region: PageTileRegion
     ): Boolean {
-        val manifest = pageTileManifests[pageIndex] ?: return false
-        val expectedPrefix = pageBitmapKey(active, pageIndex, dpi) + "|tile|"
-        if (manifest.firstOrNull()?.key?.startsWith(expectedPrefix) != true) return false
+        val pageData = active.pages.getOrNull(pageIndex) ?: return false
+        val rasterSize = PageTilePlanner.rasterSize(
+            pageData.widthPoints, pageData.heightPoints, dpi
+        )
+        val desiredBounds = PageTilePlanner.planVisible(
+            rasterSize.widthPx,
+            rasterSize.heightPx,
+            region
+        )
+        if (desiredBounds.isEmpty()) return false
+
+        val manifest = pageTileManifests[pageTileManifestKey(active, pageIndex, dpi)]
+            ?: return false
         val entry = boundPageViews.entries.firstOrNull {
             it.value.pageIndex == pageIndex
         } ?: return false
         val view = entry.key
         val binding = entry.value
-        val keys = manifest.map { it.key }
-        if (binding.tileKeys == keys) return true
-
         val acquired = mutableListOf<PageTile>()
-        for (item in manifest) {
+        val nextKeys = mutableListOf<String>()
+
+        for (bounds in desiredBounds) {
+            val item = manifest[bounds] ?: continue
             val bitmap = bitmapCache.acquire(item.key)
             if (bitmap == null) {
-                acquired.forEach { bitmapCache.release(it.cacheKey) }
-                return false
+                manifest.remove(bounds)
+                continue
             }
             acquired.add(
                 PageTile(
@@ -602,103 +622,111 @@ class MainActivity : Activity() {
                     cacheKey = item.key
                 )
             )
+            nextKeys.add(item.key)
+        }
+
+        if (binding.tileKeys == nextKeys) {
+            nextKeys.forEach(bitmapCache::release)
+            return nextKeys.size == desiredBounds.size
         }
         view.replaceTiles(acquired)
-        boundPageViews[view] = binding.copy(tileKeys = keys)
-        binding.tileKeys.forEach(bitmapCache::release)
-        return true
+        boundPageViews[view] = binding.copy(tileKeys = nextKeys)
+        binding.tileKeys.filterNot { it in nextKeys }.forEach(bitmapCache::release)
+        return nextKeys.size == desiredBounds.size
     }
 
-    private fun requestPageTiles(pageIndex: Int, requestedDpi: Float) {
+    private fun requestPageTiles(
+        pageIndex: Int,
+        requestedDpi: Float,
+        region: PageTileRegion
+    ) {
         val active = session ?: return
         val pageData = active.pages.getOrNull(pageIndex) ?: return
         val targetDpi = RenderDpiPolicy.capForTiles(
             pageData.widthPoints,
             pageData.heightPoints,
             requestedDpi
-        )
+        ).toInt().toFloat()
         if (targetDpi <= PdfPageView.BASE_RENDER_DPI * 1.08f) return
 
-        val prefix = pageBitmapKey(active, pageIndex, targetDpi) + "|tile|"
-        val manifest = pageTileManifests[pageIndex]
-        if (manifest?.firstOrNull()?.key?.startsWith(prefix) == true) {
-            val allTilesCached = manifest.all { bitmapCache.contains(it.key) }
-            val pageIsBound = boundPageViews.values.any { it.pageIndex == pageIndex }
-            if (allTilesCached &&
-                (!pageIsBound || displayCachedTiles(active, pageIndex, targetDpi))
-            ) return
+        val rasterSize = PageTilePlanner.rasterSize(
+            pageData.widthPoints, pageData.heightPoints, targetDpi
+        )
+        val desiredBounds = PageTilePlanner.planVisible(
+            rasterSize.widthPx,
+            rasterSize.heightPx,
+            region
+        )
+        if (desiredBounds.isEmpty()) return
+
+        val manifestKey = pageTileManifestKey(active, pageIndex, targetDpi)
+        val manifest = pageTileManifests.getOrPut(manifestKey) { mutableMapOf() }
+        val missingBounds = desiredBounds.filter { bounds ->
+            val cached = manifest[bounds]
+            cached == null || !bitmapCache.contains(cached.key)
+        }
+        val boundsToRender = missingBounds.filter { bounds ->
+            pendingTileKeys.add(pageTileKey(active, pageIndex, targetDpi, bounds))
         }
 
-        val requestKey = pageBitmapKey(active, pageIndex, targetDpi) + "|tiles"
-        if (!pendingTileKeys.add(requestKey)) return
+        if (boundsToRender.isEmpty()) {
+            displayCachedTiles(active, pageIndex, targetDpi, region)
+            return
+        }
 
         io.execute {
-            var tiles: List<PageTile>? = null
-            var fullPage: Bitmap? = null
+            var renderedTiles: List<PageTile>? = null
             var failure: Exception? = null
             try {
-                val renderedPage = synchronized(active.document) {
-                    active.renderer.renderImageWithDPI(pageIndex, targetDpi)
+                renderedTiles = synchronized(active.document) {
+                    PdfRegionTileRenderer.renderPageTiles(
+                        active.renderer, pageIndex, pageData, targetDpi, boundsToRender
+                    )
                 }
-                fullPage = renderedPage
-                tiles = PageTileFactory.split(renderedPage, PageTilePlanner.DEFAULT_TILE_SIZE)
-                fullPage = null
             } catch (error: Exception) {
                 failure = error
-            } finally {
-                fullPage?.let { if (!it.isRecycled) it.recycle() }
             }
 
             runOnUiThread {
-                pendingTileKeys.remove(requestKey)
+                boundsToRender.forEach { bounds ->
+                    pendingTileKeys.remove(pageTileKey(active, pageIndex, targetDpi, bounds))
+                }
                 if (session !== active) {
-                    tiles?.forEach {
+                    renderedTiles?.forEach {
                         if (!it.bitmap.isRecycled) it.bitmap.recycle()
                     }
                     return@runOnUiThread
                 }
-                val renderedTiles = tiles
-                if (renderedTiles == null) {
-                    statusText.text = "High-resolution tile render failed: " +
+
+                val tiles = renderedTiles
+                if (tiles == null) {
+                    statusText.text = "Visible tile render failed: " +
                         (failure?.message ?: "unknown error")
                     return@runOnUiThread
                 }
 
-                val nextManifest = mutableListOf<CachedPageTile>()
-                var complete = true
-                for (index in renderedTiles.indices) {
-                    val tile = renderedTiles[index]
+                val currentManifest = pageTileManifests.getOrPut(manifestKey) { mutableMapOf() }
+                for (tile in tiles) {
                     val key = pageTileKey(active, pageIndex, targetDpi, tile.bounds)
-                    if (!bitmapCache.put(key, tile.bitmap)) {
-                        complete = false
-                        for (remaining in index + 1 until renderedTiles.size) {
-                            val bitmap = renderedTiles[remaining].bitmap
-                            if (!bitmap.isRecycled) bitmap.recycle()
-                        }
-                        break
-                    }
-                    nextManifest.add(
-                        CachedPageTile(
+                    if (bitmapCache.put(key, tile.bitmap)) {
+                        currentManifest[tile.bounds] = CachedPageTile(
                             key = key,
                             bounds = tile.bounds,
                             pageWidth = tile.pageWidth,
                             pageHeight = tile.pageHeight
                         )
-                    )
+                    }
                 }
 
-                if (!complete || nextManifest.size != renderedTiles.size) {
-                    pageTileManifests.remove(pageIndex)
-                    statusText.text =
-                        "High-resolution tiles exceed the bitmap cache budget; base page retained"
-                    return@runOnUiThread
-                }
-
-                pageTileManifests[pageIndex] = nextManifest
-                val pageIsBound = boundPageViews.values.any { it.pageIndex == pageIndex }
-                if (pageIsBound && !displayCachedTiles(active, pageIndex, targetDpi)) {
-                    pageTileManifests.remove(pageIndex)
-                    statusText.text = "Tile cache pressure; showing the base page raster"
+                val boundView = boundPageViews.entries.firstOrNull {
+                    it.value.pageIndex == pageIndex
+                }?.key
+                val currentRegion = boundView?.visiblePageRegion() ?: region
+                val complete = displayCachedTiles(
+                    active, pageIndex, targetDpi, currentRegion
+                )
+                if (!complete) {
+                    statusText.text = "Loading visible high-resolution tiles…"
                 }
             }
         }
@@ -721,7 +749,13 @@ class MainActivity : Activity() {
             requestPageRender(index, PdfPageView.BASE_RENDER_DPI)
             val dpi = requestedRenderDpiByPage[index] ?: PdfPageView.BASE_RENDER_DPI
             if (dpi > PdfPageView.BASE_RENDER_DPI * 1.08f) {
-                requestPageTiles(index, dpi)
+                val pageView = boundPageViews.entries.firstOrNull {
+                    it.value.pageIndex == index
+                }?.key
+                val region = pageView?.visiblePageRegion()
+                if (region != null && !displayCachedTiles(active, index, dpi, region)) {
+                    requestPageTiles(index, dpi, region)
+                }
             }
         }
     }
@@ -934,7 +968,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun requestSharperPage(pageIndex: Int, requestedDpi: Float) {
+    private fun requestSharperPage(
+        pageIndex: Int,
+        requestedDpi: Float,
+        region: PageTileRegion
+    ) {
         val active = session ?: return
         val pageData = active.pages.getOrNull(pageIndex) ?: return
         val desiredDpi = requestedDpi.coerceIn(
@@ -945,11 +983,15 @@ class MainActivity : Activity() {
             pageData.widthPoints,
             pageData.heightPoints,
             desiredDpi
-        )
+        ).toInt().toFloat()
         val currentDpi = requestedRenderDpiByPage[pageIndex] ?: PdfPageView.BASE_RENDER_DPI
-        if (targetDpi <= currentDpi * 1.08f) return
-        requestedRenderDpiByPage[pageIndex] = targetDpi
-        requestPageTiles(pageIndex, targetDpi)
+        val effectiveDpi = maxOf(currentDpi, targetDpi)
+        if (targetDpi > currentDpi * 1.08f) {
+            requestedRenderDpiByPage[pageIndex] = targetDpi
+        }
+        if (effectiveDpi > PdfPageView.BASE_RENDER_DPI * 1.08f) {
+            requestPageTiles(pageIndex, effectiveDpi, region)
+        }
     }
 
     private fun changePage(delta: Int) {

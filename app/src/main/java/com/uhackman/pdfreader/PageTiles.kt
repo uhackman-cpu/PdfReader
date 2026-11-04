@@ -1,6 +1,7 @@
 package com.uhackman.pdfreader
 
-import android.graphics.Bitmap
+import kotlin.math.ceil
+import kotlin.math.floor
 
 data class PageTileBounds(
     val leftPx: Int,
@@ -12,11 +13,64 @@ data class PageTileBounds(
     val heightPx: Int get() = bottomPx - topPx
 }
 
+/** Normalized page area currently visible through a zoomed page view. */
+data class PageTileRegion(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float
+) {
+    init {
+        require(left.isFinite() && top.isFinite() && right.isFinite() && bottom.isFinite())
+        require(left <= right && top <= bottom)
+    }
+
+    companion object {
+        val FULL_PAGE = PageTileRegion(0f, 0f, 1f, 1f)
+    }
+}
+
+data class PageRasterSize(val widthPx: Int, val heightPx: Int)
+
+/** Inverts the page view's translate-then-scale transform into page coordinates. */
+object PageTileViewport {
+    fun visibleRegion(
+        viewWidth: Float,
+        viewHeight: Float,
+        pageLeft: Float,
+        pageTop: Float,
+        pageRight: Float,
+        pageBottom: Float,
+        zoom: Float,
+        offsetX: Float,
+        offsetY: Float
+    ): PageTileRegion? {
+        val values = listOf(
+            viewWidth, viewHeight, pageLeft, pageTop, pageRight, pageBottom,
+            zoom, offsetX, offsetY
+        )
+        if (values.any { !it.isFinite() } || viewWidth <= 0f || viewHeight <= 0f ||
+            pageRight <= pageLeft || pageBottom <= pageTop || zoom <= 0f
+        ) return null
+
+        val left = ((-offsetX) / zoom - pageLeft) / (pageRight - pageLeft)
+        val top = ((-offsetY) / zoom - pageTop) / (pageBottom - pageTop)
+        val right = ((viewWidth - offsetX) / zoom - pageLeft) / (pageRight - pageLeft)
+        val bottom = ((viewHeight - offsetY) / zoom - pageTop) / (pageBottom - pageTop)
+        val clippedLeft = left.coerceIn(0f, 1f).let { if (it == 0f) 0f else it }
+        val clippedTop = top.coerceIn(0f, 1f).let { if (it == 0f) 0f else it }
+        val clippedRight = right.coerceIn(0f, 1f).let { if (it == 0f) 0f else it }
+        val clippedBottom = bottom.coerceIn(0f, 1f).let { if (it == 0f) 0f else it }
+        if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) return null
+        return PageTileRegion(clippedLeft, clippedTop, clippedRight, clippedBottom)
+    }
+}
+
 data class PageTile(
     val bounds: PageTileBounds,
     val pageWidth: Int,
     val pageHeight: Int,
-    val bitmap: Bitmap,
+    val bitmap: android.graphics.Bitmap,
     val cacheKey: String = ""
 ) {
     val left: Float get() = bounds.leftPx.toFloat() / pageWidth
@@ -28,6 +82,17 @@ data class PageTile(
 /** Deterministic row-major tile layout for a rendered page raster. */
 object PageTilePlanner {
     const val DEFAULT_TILE_SIZE = 512
+
+    /** Uses the already-rotated/cropped dimensions supplied by PDFRenderer. */
+    fun rasterSize(widthPoints: Float, heightPoints: Float, dpi: Float): PageRasterSize {
+        require(widthPoints.isFinite() && heightPoints.isFinite() && dpi.isFinite())
+        require(widthPoints > 0f && heightPoints > 0f && dpi > 0f)
+        val scale = dpi / 72f
+        return PageRasterSize(
+            widthPx = floor(widthPoints * scale).toInt().coerceAtLeast(1),
+            heightPx = floor(heightPoints * scale).toInt().coerceAtLeast(1)
+        )
+    }
 
     fun plan(
         width: Int,
@@ -51,46 +116,52 @@ object PageTilePlanner {
         }
         return result
     }
-}
 
-/**
- * Splits a bounded high-resolution page raster into independently cacheable
- * bitmaps. The source raster is always recycled after the copies are made.
- */
-object PageTileFactory {
-    fun split(
-        source: Bitmap,
-        tileSize: Int = PageTilePlanner.DEFAULT_TILE_SIZE
-    ): List<PageTile> {
-        val pageWidth = source.width
-        val pageHeight = source.height
-        val bounds = PageTilePlanner.plan(pageWidth, pageHeight, tileSize)
-        val result = ArrayList<PageTile>(bounds.size)
-        try {
-            val config = source.config ?: Bitmap.Config.ARGB_8888
-            for (tile in bounds) {
-                val isWholePage = tile.leftPx == 0 && tile.topPx == 0 &&
-                    tile.rightPx == pageWidth && tile.bottomPx == pageHeight
-                val bitmap = if (isWholePage) {
-                    source.copy(config, false)
-                        ?: throw IllegalStateException("Could not copy page raster")
-                } else {
-                    Bitmap.createBitmap(
-                        source,
-                        tile.leftPx,
-                        tile.topPx,
-                        tile.widthPx,
-                        tile.heightPx
-                    )
-                }
-                result.add(PageTile(tile, pageWidth, pageHeight, bitmap))
+    /**
+     * Plans only tiles intersecting the normalized viewport plus a small
+     * prefetch margin. Coordinates are clamped to the rendered page.
+     */
+    fun planVisible(
+        width: Int,
+        height: Int,
+        region: PageTileRegion,
+        tileSize: Int = DEFAULT_TILE_SIZE,
+        prefetchTiles: Int = 1
+    ): List<PageTileBounds> {
+        require(width > 0 && height > 0) { "Page dimensions must be positive" }
+        require(tileSize > 0) { "Tile size must be positive" }
+        require(prefetchTiles >= 0) { "Prefetch tile count cannot be negative" }
+
+        val left = region.left.coerceIn(0f, 1f)
+        val top = region.top.coerceIn(0f, 1f)
+        val right = region.right.coerceIn(0f, 1f)
+        val bottom = region.bottom.coerceIn(0f, 1f)
+        if (right <= left || bottom <= top) return emptyList()
+
+        val firstX = floor(left * width).toInt().coerceIn(0, width - 1)
+        val firstY = floor(top * height).toInt().coerceIn(0, height - 1)
+        val afterX = ceil(right * width).toInt().coerceIn(1, width)
+        val afterY = ceil(bottom * height).toInt().coerceIn(1, height)
+        val lastX = (afterX - 1).coerceIn(0, width - 1)
+        val lastY = (afterY - 1).coerceIn(0, height - 1)
+
+        val maxColumn = (width - 1) / tileSize
+        val maxRow = (height - 1) / tileSize
+        val firstColumn = (firstX / tileSize - prefetchTiles).coerceAtLeast(0)
+        val lastColumn = (lastX / tileSize + prefetchTiles).coerceAtMost(maxColumn)
+        val firstRow = (firstY / tileSize - prefetchTiles).coerceAtLeast(0)
+        val lastRow = (lastY / tileSize + prefetchTiles).coerceAtMost(maxRow)
+
+        val result = ArrayList<PageTileBounds>()
+        for (row in firstRow..lastRow) {
+            val tileTop = row * tileSize
+            val tileBottom = minOf(tileTop + tileSize, height)
+            for (column in firstColumn..lastColumn) {
+                val tileLeft = column * tileSize
+                val tileRight = minOf(tileLeft + tileSize, width)
+                result.add(PageTileBounds(tileLeft, tileTop, tileRight, tileBottom))
             }
-            return result
-        } catch (error: Throwable) {
-            result.forEach { if (!it.bitmap.isRecycled) it.bitmap.recycle() }
-            throw error
-        } finally {
-            if (!source.isRecycled) source.recycle()
         }
+        return result
     }
 }

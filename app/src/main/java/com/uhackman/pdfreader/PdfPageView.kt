@@ -33,7 +33,7 @@ class PdfPageView @JvmOverloads constructor(
 
     var onSelectionChanged: ((Int, Int) -> Unit)? = null
     var onDocumentSelectionGesture: ((SelectionGestureEvent) -> Unit)? = null
-    var onResolutionRequested: ((Float) -> Unit)? = null
+    var onResolutionRequested: ((Float, PageTileRegion) -> Unit)? = null
 
     private val bitmapPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val overlayPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -101,7 +101,7 @@ class PdfPageView @JvmOverloads constructor(
                 parent?.requestDisallowInterceptTouchEvent(false)
                 val targetDpi = (BASE_RENDER_DPI * zoom).coerceAtMost(MAX_RENDER_DPI)
                 if (targetDpi > BASE_RENDER_DPI * 1.25f) {
-                    onResolutionRequested?.invoke(targetDpi)
+                    visiblePageRegion()?.let { region -> onResolutionRequested?.invoke(targetDpi, region) }
                 }
             }
         }
@@ -493,6 +493,23 @@ class PdfPageView @JvmOverloads constructor(
         return RectF(left, top, left + pageWidth, top + pageHeight)
     }
 
+    /** Returns the normalized page area visible after the current zoom and pan. */
+    fun visiblePageRegion(): PageTileRegion? {
+        val image = bitmap ?: return null
+        val rect = pageRect(image)
+        return PageTileViewport.visibleRegion(
+            viewWidth = width.toFloat(),
+            viewHeight = height.toFloat(),
+            pageLeft = rect.left,
+            pageTop = rect.top,
+            pageRight = rect.right,
+            pageBottom = rect.bottom,
+            zoom = zoom,
+            offsetX = offsetX,
+            offsetY = offsetY
+        )
+    }
+
     private fun hitTest(viewX: Float, viewY: Float): Int {
         val currentPage = page ?: return -1
         val image = bitmap ?: return -1
@@ -658,6 +675,12 @@ class PdfPageView @JvmOverloads constructor(
                     lastTouchX = event.x
                     lastTouchY = event.y
                     invalidate()
+                    if (zoom > 1.01f) {
+                        val targetDpi = (BASE_RENDER_DPI * zoom).coerceAtMost(MAX_RENDER_DPI)
+                        visiblePageRegion()?.let { region ->
+                            onResolutionRequested?.invoke(targetDpi, region)
+                        }
+                    }
                 } else if (pendingTextPress && !selecting) {
                     when (GestureArbitration.classify(
                         event.x - downX, event.y - downY, touchSlop
