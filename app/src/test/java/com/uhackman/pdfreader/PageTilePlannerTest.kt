@@ -69,6 +69,43 @@ class PageTilePlannerTest {
     }
 
     @Test
+    fun inverseViewportTransformReturnsFullPageAtBaseZoom() {
+        assertEquals(
+            PageTileRegion.FULL_PAGE,
+            PageTileViewport.visibleRegion(
+                1000f, 1000f, 0f, 0f, 1000f, 1000f,
+                1f, 0f, 0f
+            )
+        )
+    }
+
+    @Test
+    fun inverseViewportTransformTracksZoomAndPan() {
+        val centered = PageTileViewport.visibleRegion(
+            1000f, 1000f, 0f, 0f, 1000f, 1000f,
+            2f, 0f, 0f
+        )
+        assertEquals(PageTileRegion(0.25f, 0.25f, 0.75f, 0.75f), centered)
+
+        val panned = PageTileViewport.visibleRegion(
+            1000f, 1000f, 0f, 0f, 1000f, 1000f,
+            2f, -250f, -250f
+        )
+        assertEquals(PageTileRegion(0.375f, 0.375f, 0.875f, 0.875f), panned)
+    }
+
+    @Test
+    fun inverseViewportTransformReturnsNullWhenPageIsOutsideView() {
+        assertEquals(
+            null,
+            PageTileViewport.visibleRegion(
+                100f, 100f, 0f, 0f, 1000f, 1000f,
+                1f, -1200f, -1200f
+            )
+        )
+    }
+
+    @Test
     fun tileDpiStaysWithinTheTemporaryRasterBudget() {
         val dpi = RenderDpiPolicy.capForTiles(595f, 842f, 288f)
         val pixels = 595.0 * 842.0 * (dpi / 72.0) * (dpi / 72.0)
