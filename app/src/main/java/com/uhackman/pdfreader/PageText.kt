@@ -299,6 +299,7 @@ class GlyphSpatialIndex(
 object RenderDpiPolicy {
     const val DEFAULT_DPI = 120f
     const val MAX_BITMAP_PIXELS = 12_000_000.0
+    const val MAX_TILED_BITMAP_PIXELS = 8_000_000.0
     const val MIN_DPI = 48f
 
     fun cap(widthPoints: Float, heightPoints: Float, requestedDpi: Float): Float {
@@ -312,6 +313,19 @@ object RenderDpiPolicy {
             MAX_BITMAP_PIXELS * 72.0 * 72.0 / areaPoints
         ).toFloat()
         return minOf(desired, maxDpi.coerceAtLeast(MIN_DPI))
+    }
+
+    /** Keeps the temporary full-page raster used for tile splitting below 8 MP. */
+    fun capForTiles(widthPoints: Float, heightPoints: Float, requestedDpi: Float): Float {
+        val capped = cap(widthPoints, heightPoints, requestedDpi)
+        if (!widthPoints.isFinite() || !heightPoints.isFinite() ||
+            widthPoints <= 0f || heightPoints <= 0f
+        ) return capped
+        val areaPoints = widthPoints.toDouble() * heightPoints.toDouble()
+        val tileDpi = kotlin.math.sqrt(
+            MAX_TILED_BITMAP_PIXELS * 72.0 * 72.0 / areaPoints
+        ).toFloat()
+        return minOf(capped, tileDpi.coerceAtLeast(MIN_DPI))
     }
 }
 

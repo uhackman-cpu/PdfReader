@@ -25,6 +25,7 @@ class PdfPageView @JvmOverloads constructor(
     private var page: PageText? = null
     private var glyphSpatialIndex = GlyphSpatialIndex(emptyList())
     private var bitmap: Bitmap? = null
+    private var pageTiles: List<PageTile> = emptyList()
     private var highlights: List<Highlight> = emptyList()
     private var searchRange: IntRange? = null
     private var pendingSearchRange: Pair<Int, Int>? = null
@@ -143,6 +144,7 @@ class PdfPageView @JvmOverloads constructor(
         page = pageText
         glyphSpatialIndex = GlyphSpatialIndex(pageText?.glyphs ?: emptyList())
         bitmap = pageBitmap
+        pageTiles = emptyList()
         highlights = pageHighlights
         searchRange = null
         pendingSearchRange = null
@@ -191,6 +193,7 @@ class PdfPageView @JvmOverloads constructor(
         page = null
         glyphSpatialIndex = GlyphSpatialIndex(emptyList())
         bitmap = null
+        pageTiles = emptyList()
         highlights = emptyList()
         searchRange = null
         pendingSearchRange = null
@@ -226,6 +229,12 @@ class PdfPageView @JvmOverloads constructor(
     fun replaceBitmap(pageBitmap: Bitmap) {
         // The bounded cache owns this bitmap; views only hold a leased reference.
         bitmap = pageBitmap
+        invalidate()
+    }
+
+    /** Replaces high-resolution tile overlays while the cache leases their bitmaps. */
+    fun replaceTiles(tiles: List<PageTile>) {
+        pageTiles = tiles
         invalidate()
     }
 
@@ -315,6 +324,16 @@ class PdfPageView @JvmOverloads constructor(
         canvas.translate(offsetX, offsetY)
         canvas.scale(zoom, zoom)
         canvas.drawBitmap(image, null, rect, bitmapPaint)
+        for (tile in pageTiles) {
+            if (tile.bitmap.isRecycled) continue
+            val tileRect = RectF(
+                rect.left + tile.left * rect.width(),
+                rect.top + tile.top * rect.height(),
+                rect.left + tile.right * rect.width(),
+                rect.top + tile.bottom * rect.height()
+            )
+            canvas.drawBitmap(tile.bitmap, null, tileRect, bitmapPaint)
+        }
 
         for (highlight in highlights) {
             drawGlyphRange(
