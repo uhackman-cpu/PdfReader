@@ -204,6 +204,7 @@ class MainActivity : Activity() {
             Toast.makeText(this, "Open a PDF first", Toast.LENGTH_SHORT).show()
             return
         }
+        clearVisibleSelections()
         textModeEnabled = !textModeEnabled
         pageList.visibility = if (textModeEnabled) View.GONE else View.VISIBLE
         textModeView.visibility = if (textModeEnabled) View.VISIBLE else View.GONE
@@ -228,8 +229,20 @@ class MainActivity : Activity() {
     ) {
         val active = session ?: return
         if (pageIndex !in active.pages.indices) return
+        val changedPage = textModePageIndex != pageIndex
         currentPage = pageIndex
         pageInfo.text = "Page " + (pageIndex + 1) + " / " + active.pages.size + " • Text mode"
+        if (changedPage) {
+            selectedPageIndex = -1
+            selectedRange = null
+            selectedPlainText = null
+            documentSelection = null
+            selectionAnchor = null
+            selectionFocus = null
+            copyButton.isEnabled = false
+            highlightButton.isEnabled = false
+            selectedTextView.text = "Selected text will appear here"
+        }
 
         var pageText = suppliedPageText
         if (pageText == null) {
