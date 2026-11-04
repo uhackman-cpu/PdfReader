@@ -11,9 +11,12 @@ import org.junit.Test
 class PdfTextExtractorTest {
     @Test
     fun cropBoxOriginDoesNotShiftNormalizedGlyphGeometryAcrossRotations() {
-        val reference = extractPage(cropLeft = 50f, cropBottom = 75f, rotation = 0)
-
         for (rotation in listOf(0, 90, 180, 270)) {
+            val reference = extractPage(
+                cropLeft = 50f,
+                cropBottom = 75f,
+                rotation = rotation
+            )
             val shifted = extractPage(
                 cropLeft = 100f,
                 cropBottom = 125f,
