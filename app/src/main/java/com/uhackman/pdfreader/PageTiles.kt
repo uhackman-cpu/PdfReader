@@ -57,10 +57,10 @@ object PageTileViewport {
         val top = ((-offsetY) / zoom - pageTop) / (pageBottom - pageTop)
         val right = ((viewWidth - offsetX) / zoom - pageLeft) / (pageRight - pageLeft)
         val bottom = ((viewHeight - offsetY) / zoom - pageTop) / (pageBottom - pageTop)
-        val clippedLeft = left.coerceIn(0f, 1f)
-        val clippedTop = top.coerceIn(0f, 1f)
-        val clippedRight = right.coerceIn(0f, 1f)
-        val clippedBottom = bottom.coerceIn(0f, 1f)
+        val clippedLeft = left.coerceIn(0f, 1f).let { if (it == 0f) 0f else it }
+        val clippedTop = top.coerceIn(0f, 1f).let { if (it == 0f) 0f else it }
+        val clippedRight = right.coerceIn(0f, 1f).let { if (it == 0f) 0f else it }
+        val clippedBottom = bottom.coerceIn(0f, 1f).let { if (it == 0f) 0f else it }
         if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) return null
         return PageTileRegion(clippedLeft, clippedTop, clippedRight, clippedBottom)
     }
