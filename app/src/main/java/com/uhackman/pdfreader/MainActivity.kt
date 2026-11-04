@@ -22,6 +22,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.rendering.PDFRenderer
+import java.io.File
 import java.util.concurrent.Executors
 import kotlin.math.max
 
@@ -344,17 +345,36 @@ class MainActivity : Activity() {
         session = null
         io.execute {
             var document: PDDocument? = null
+            var rasterRenderer: AndroidPdfRasterRenderer? = null
+            var rasterFile: File? = null
             try {
+                val file = File.createTempFile("pdfreader-", ".pdf", cacheDir)
+                rasterFile = file
                 val input = contentResolver.openInputStream(uri)
                     ?: throw IllegalStateException("Unable to open the selected document")
-                val loadedDocument = input.use { PDDocument.load(it) }
+                input.use { source ->
+                    file.outputStream().use { output -> source.copyTo(output) }
+                }
+                val loadedDocument = PDDocument.load(file)
                 document = loadedDocument
+                rasterRenderer = try {
+                    AndroidPdfRasterRenderer(file).also { platform ->
+                        if (platform.pageCount != loadedDocument.numberOfPages) {
+                            platform.close()
+                            throw IllegalStateException("Platform renderer page count mismatch")
+                        }
+                    }
+                } catch (_: Exception) {
+                    null
+                }
                 val pages = GlyphTextStripper.describePages(loadedDocument)
                 val documentKey = uri.toString()
                 val storedHighlights = store.list(documentKey).toMutableList()
                 val loaded = PdfSession(
                     document = loadedDocument,
                     renderer = PDFRenderer(loadedDocument),
+                    rasterRenderer = rasterRenderer,
+                    rasterFile = file,
                     pages = pages,
                     pageTextCache = PageTextCache(),
                     documentKey = documentKey,
@@ -362,11 +382,10 @@ class MainActivity : Activity() {
                     resolvedHighlights = mutableListOf()
                 )
                 document = null
+                rasterRenderer = null
+                rasterFile = null
+                closeSession(previous)
                 runOnUiThread {
-                    try {
-                        previous?.document?.close()
-                    } catch (_: Exception) {
-                    }
                     releaseAllBoundPageViews()
                     previous?.pageTextCache?.clear()
                     pageList.adapter = null
@@ -440,6 +459,11 @@ class MainActivity : Activity() {
                     document?.close()
                 } catch (_: Exception) {
                 }
+                try {
+                    rasterRenderer?.close()
+                } catch (_: Exception) {
+                }
+                rasterFile?.delete()
                 runOnUiThread {
                     statusText.text = "Could not open PDF: " +
                         (error.message ?: error.javaClass.simpleName)
@@ -690,7 +714,7 @@ class MainActivity : Activity() {
             var failure: Exception? = null
             try {
                 rendered = synchronized(active.document) {
-                    active.renderer.renderImageWithDPI(pageIndex, targetDpi)
+                    renderPageBitmap(active, pageIndex, pageData, targetDpi)
                 }
             } catch (error: Exception) {
                 failure = error
@@ -839,9 +863,7 @@ class MainActivity : Activity() {
             var failure: Exception? = null
             try {
                 renderedTiles = synchronized(active.document) {
-                    PdfRegionTileRenderer.renderPageTiles(
-                        active.renderer, pageIndex, pageData, targetDpi, boundsToRender
-                    )
+                    renderPageTiles(active, pageIndex, pageData, targetDpi, boundsToRender)
                 }
             } catch (error: Exception) {
                 failure = error
@@ -1519,6 +1541,56 @@ class MainActivity : Activity() {
         statusText.text = "Opened saved highlight"
     }
 
+    private fun renderPageBitmap(
+        active: PdfSession,
+        pageIndex: Int,
+        pageData: PageDescriptor,
+        dpi: Float
+    ): Bitmap {
+        val platform = active.rasterRenderer
+        if (platform != null) {
+            try {
+                platform.renderPage(pageIndex, pageData, dpi)?.let { return it }
+            } catch (_: Exception) {
+                // PDFBox remains a per-page fallback for unsupported PDFium features.
+            }
+        }
+        return active.renderer.renderImageWithDPI(pageIndex, dpi)
+    }
+
+    private fun renderPageTiles(
+        active: PdfSession,
+        pageIndex: Int,
+        pageData: PageDescriptor,
+        dpi: Float,
+        bounds: List<PageTileBounds>
+    ): List<PageTile> {
+        val platform = active.rasterRenderer
+        if (platform != null) {
+            try {
+                platform.renderPageTiles(pageIndex, pageData, dpi, bounds)?.let { return it }
+            } catch (_: Exception) {
+                // Use the existing PDFBox tile path when PDFium cannot render this page.
+            }
+        }
+        return PdfRegionTileRenderer.renderPageTiles(
+            active.renderer, pageIndex, pageData, dpi, bounds
+        )
+    }
+
+    private fun closeSession(active: PdfSession?) {
+        if (active == null) return
+        try {
+            active.document.close()
+        } catch (_: Exception) {
+        }
+        try {
+            active.rasterRenderer?.close()
+        } catch (_: Exception) {
+        }
+        active.rasterFile.delete()
+    }
+
     override fun onDestroy() {
         val old = session
         session = null
@@ -1530,12 +1602,7 @@ class MainActivity : Activity() {
         pendingTextPageIndexes.clear()
         old?.pageTextCache?.clear()
         if (old != null) {
-            io.execute {
-                try {
-                    old.document.close()
-                } catch (_: Exception) {
-                }
-            }
+            io.execute { closeSession(old) }
         }
         io.shutdown()
         super.onDestroy()
@@ -1565,6 +1632,8 @@ class MainActivity : Activity() {
     private data class PdfSession(
         val document: PDDocument,
         val renderer: PDFRenderer,
+        val rasterRenderer: AndroidPdfRasterRenderer?,
+        val rasterFile: File,
         val pages: List<PageDescriptor>,
         val pageTextCache: PageTextCache,
         val documentKey: String,
