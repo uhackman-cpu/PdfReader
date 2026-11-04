@@ -284,7 +284,7 @@ class MainActivity : Activity() {
         val first = minOf(start, end).coerceIn(0, page.text.length)
         val last = maxOf(start, end).coerceIn(first, page.text.length)
         val range = page.glyphRangeForChars(first, last) ?: return
-        val selected = page.text.substring(first, last).trim()
+        val selected = page.textForGlyphRange(range.first, range.last)
         if (selected.isBlank()) return
 
         documentSelection = null
@@ -501,6 +501,9 @@ class MainActivity : Activity() {
         val cachedPage = active.pageTextCache.acquire(pageIndex)
         if (cachedPage != null) {
             active.pageTextCache.release(pageIndex)
+            if (textModeEnabled && currentPage == pageIndex) {
+                showTextModePage(pageIndex, cachedPage)
+            }
             attachPageTextToBoundViews(active, pageIndex, cachedPage)
             return
         }
