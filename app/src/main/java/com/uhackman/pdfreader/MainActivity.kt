@@ -1068,16 +1068,28 @@ class MainActivity : Activity() {
             val range = page?.let {
                 DocumentSelectionBuilder.rangeForPage(anchor, focus, focus.pageIndex, it.glyphs.size)
             }
-            selectedTextView.text = if (page != null && range != null) {
+            val previewText = if (page != null && range != null) {
                 page.textForGlyphRange(range.first, range.last)
-            } else "Selecting text…"
+            } else null
+            selectedTextView.text = previewText ?: "Selecting text…"
+
+            // The visible page already has the extracted glyph-to-text map.
+            // Enable Copy/Highlight immediately instead of waiting for a
+            // second full PDFTextStripper pass after the finger is released.
+            selectedPageIndex = focus.pageIndex
+            selectedRange = range
+            selectedPlainText = previewText?.takeIf { it.isNotBlank() }
+            copyButton.isEnabled = !selectedPlainText.isNullOrBlank()
+            highlightButton.isEnabled = !selectedPlainText.isNullOrBlank()
         } else {
             selectedTextView.text = "Selecting pages " +
                 (firstPage + 1) + "–" + (lastPage + 1) + "…"
+            selectedPageIndex = -1
+            selectedRange = null
+            selectedPlainText = null
+            copyButton.isEnabled = false
+            highlightButton.isEnabled = false
         }
-        selectedPlainText = null
-        copyButton.isEnabled = false
-        highlightButton.isEnabled = false
     }
 
     private fun resolveDocumentSelection(
