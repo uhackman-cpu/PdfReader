@@ -34,6 +34,37 @@ class PageTextTest {
         assertNull(page.glyphRangeForChars(20, 24))
     }
 
+    @Test
+    fun nativeTextViewUtf16SelectionMapsBackToIndicGlyphRanges() {
+        val text = "हिन्दी PDF"
+        val page = pageFromText(text)
+        val start = text.indexOf("हिन्दी")
+        val end = start + "हिन्दी".length
+
+        val range = page.glyphRangeForChars(start, end)
+
+        assertEquals(0..5, range)
+        assertEquals("हिन्दी", page.textForGlyphRange(range!!.first, range.last))
+    }
+
+    @Test
+    fun nativeTextViewSelectionMapsLigatureTextToItsSinglePositionedGlyph() {
+        val page = PageText(
+            text = "office",
+            glyphs = listOf(
+                Glyph(0f, 0f, 0.1f, 0.1f, 0, 1),
+                Glyph(0.1f, 0f, 0.35f, 0.1f, 1, 4),
+                Glyph(0.35f, 0f, 0.45f, 0.1f, 4, 5),
+                Glyph(0.45f, 0f, 0.55f, 0.1f, 5, 6)
+            ),
+            widthPoints = 100f,
+            heightPoints = 100f
+        )
+
+        assertEquals(1..1, page.glyphRangeForChars(2, 3))
+        assertEquals("ffi", page.textForGlyphRange(1, 1))
+    }
+
 
     @Test
     fun longPressSelectionExpandsToAWordButKeepsPunctuationSeparate() {
