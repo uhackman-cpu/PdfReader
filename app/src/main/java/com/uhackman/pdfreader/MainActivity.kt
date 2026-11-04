@@ -646,7 +646,7 @@ class MainActivity : Activity() {
             pageData.widthPoints,
             pageData.heightPoints,
             requestedDpi
-        )
+        ).toInt().toFloat()
         if (targetDpi <= PdfPageView.BASE_RENDER_DPI * 1.08f) return
 
         val rasterSize = PageTilePlanner.rasterSize(
@@ -983,7 +983,7 @@ class MainActivity : Activity() {
             pageData.widthPoints,
             pageData.heightPoints,
             desiredDpi
-        )
+        ).toInt().toFloat()
         val currentDpi = requestedRenderDpiByPage[pageIndex] ?: PdfPageView.BASE_RENDER_DPI
         val effectiveDpi = maxOf(currentDpi, targetDpi)
         if (targetDpi > currentDpi * 1.08f) {
