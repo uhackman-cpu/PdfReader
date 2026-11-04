@@ -497,18 +497,17 @@ class PdfPageView @JvmOverloads constructor(
     fun visiblePageRegion(): PageTileRegion? {
         val image = bitmap ?: return null
         val rect = pageRect(image)
-        if (rect.width() <= 0f || rect.height() <= 0f || zoom <= 0f) return null
-
-        val left = ((-offsetX) / zoom - rect.left) / rect.width()
-        val top = ((-offsetY) / zoom - rect.top) / rect.height()
-        val right = ((width.toFloat() - offsetX) / zoom - rect.left) / rect.width()
-        val bottom = ((height.toFloat() - offsetY) / zoom - rect.top) / rect.height()
-        val clippedLeft = left.coerceIn(0f, 1f)
-        val clippedTop = top.coerceIn(0f, 1f)
-        val clippedRight = right.coerceIn(0f, 1f)
-        val clippedBottom = bottom.coerceIn(0f, 1f)
-        if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) return null
-        return PageTileRegion(clippedLeft, clippedTop, clippedRight, clippedBottom)
+        return PageTileViewport.visibleRegion(
+            viewWidth = width.toFloat(),
+            viewHeight = height.toFloat(),
+            pageLeft = rect.left,
+            pageTop = rect.top,
+            pageRight = rect.right,
+            pageBottom = rect.bottom,
+            zoom = zoom,
+            offsetX = offsetX,
+            offsetY = offsetY
+        )
     }
 
     private fun hitTest(viewX: Float, viewY: Float): Int {
