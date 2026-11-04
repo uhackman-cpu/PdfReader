@@ -73,7 +73,7 @@ class SelectablePageTextView(context: Context) : TextView(context) {
     }
 
     fun clearNativeSelection() {
-        val value = pageText?.text ?: return
+        if (pageText == null) return
         suppressSelectionCallback = true
         setSelection(0, 0)
         suppressSelectionCallback = false
@@ -89,9 +89,9 @@ class SelectablePageTextView(context: Context) : TextView(context) {
 
     override fun onSelectionChanged(selStart: Int, selEnd: Int) {
         super.onSelectionChanged(selStart, selEnd)
-        if (suppressSelectionCallback || selStart < 0 || selEnd <= selStart) return
-        val extracted = pageText ?: return
-        onPageTextSelectionChanged?.invoke(pageIndex, selStart, selEnd)
+        if (suppressSelectionCallback || selStart < 0 || selEnd < 0 || selStart == selEnd) return
+        if (pageText == null) return
+        onPageTextSelectionChanged?.invoke(pageIndex, minOf(selStart, selEnd), maxOf(selStart, selEnd))
     }
 
     private fun dp(value: Int): Int =
