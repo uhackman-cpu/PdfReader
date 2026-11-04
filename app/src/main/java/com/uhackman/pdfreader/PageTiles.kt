@@ -32,6 +32,40 @@ data class PageTileRegion(
 
 data class PageRasterSize(val widthPx: Int, val heightPx: Int)
 
+/** Inverts the page view's translate-then-scale transform into page coordinates. */
+object PageTileViewport {
+    fun visibleRegion(
+        viewWidth: Float,
+        viewHeight: Float,
+        pageLeft: Float,
+        pageTop: Float,
+        pageRight: Float,
+        pageBottom: Float,
+        zoom: Float,
+        offsetX: Float,
+        offsetY: Float
+    ): PageTileRegion? {
+        val values = listOf(
+            viewWidth, viewHeight, pageLeft, pageTop, pageRight, pageBottom,
+            zoom, offsetX, offsetY
+        )
+        if (values.any { !it.isFinite() } || viewWidth <= 0f || viewHeight <= 0f ||
+            pageRight <= pageLeft || pageBottom <= pageTop || zoom <= 0f
+        ) return null
+
+        val left = ((-offsetX) / zoom - pageLeft) / (pageRight - pageLeft)
+        val top = ((-offsetY) / zoom - pageTop) / (pageBottom - pageTop)
+        val right = ((viewWidth - offsetX) / zoom - pageLeft) / (pageRight - pageLeft)
+        val bottom = ((viewHeight - offsetY) / zoom - pageTop) / (pageBottom - pageTop)
+        val clippedLeft = left.coerceIn(0f, 1f)
+        val clippedTop = top.coerceIn(0f, 1f)
+        val clippedRight = right.coerceIn(0f, 1f)
+        val clippedBottom = bottom.coerceIn(0f, 1f)
+        if (clippedRight <= clippedLeft || clippedBottom <= clippedTop) return null
+        return PageTileRegion(clippedLeft, clippedTop, clippedRight, clippedBottom)
+    }
+}
+
 data class PageTile(
     val bounds: PageTileBounds,
     val pageWidth: Int,
