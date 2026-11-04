@@ -83,7 +83,7 @@ class PageTilePlannerTest {
     fun inverseViewportTransformTracksZoomAndPan() {
         val centered = PageTileViewport.visibleRegion(
             1000f, 1000f, 0f, 0f, 1000f, 1000f,
-            2f, 0f, 0f
+            2f, -500f, -500f
         )
         assertEquals(PageTileRegion(0.25f, 0.25f, 0.75f, 0.75f), centered)
 
