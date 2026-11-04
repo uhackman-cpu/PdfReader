@@ -39,6 +39,36 @@ class PageTilePlannerTest {
     }
 
     @Test
+    fun visibleViewportRequestsOnlyIntersectingTilesWithoutPrefetch() {
+        val region = PageTileRegion(0.5f, 0.5f, 0.75f, 0.75f)
+        val tiles = PageTilePlanner.planVisible(2048, 2048, region, 512, prefetchTiles = 0)
+        assertEquals(4, tiles.size)
+        assertEquals(PageTileBounds(1024, 1024, 1536, 1536), tiles.first())
+        assertEquals(PageTileBounds(1536, 1536, 2048, 2048), tiles.last())
+    }
+
+    @Test
+    fun visibleViewportPrefetchesOneTileAndClampsAtPageEdges() {
+        val region = PageTileRegion(0f, 0f, 0.25f, 0.25f)
+        val tiles = PageTilePlanner.planVisible(2048, 2048, region, 512, prefetchTiles = 1)
+        assertEquals(4, tiles.size)
+        assertEquals(PageTileBounds(0, 0, 512, 512), tiles.first())
+        assertEquals(PageTileBounds(512, 512, 1024, 1024), tiles.last())
+    }
+
+    @Test
+    fun viewportOutsidePageProducesNoTiles() {
+        val region = PageTileRegion(1.2f, 0.2f, 1.4f, 0.8f)
+        assertTrue(PageTilePlanner.planVisible(1000, 1000, region).isEmpty())
+    }
+
+    @Test
+    fun rasterSizeUsesDisplayedPageDimensionsAndDpi() {
+        val size = PageTilePlanner.rasterSize(842f, 595f, 144f)
+        assertEquals(PageRasterSize(1684, 1190), size)
+    }
+
+    @Test
     fun tileDpiStaysWithinTheTemporaryRasterBudget() {
         val dpi = RenderDpiPolicy.capForTiles(595f, 842f, 288f)
         val pixels = 595.0 * 842.0 * (dpi / 72.0) * (dpi / 72.0)
@@ -53,5 +83,10 @@ class PageTilePlannerTest {
     @Test(expected = IllegalArgumentException::class)
     fun rejectsInvalidTileSize() {
         PageTilePlanner.plan(100, 100, 0)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun rejectsNegativePrefetch() {
+        PageTilePlanner.planVisible(100, 100, PageTileRegion.FULL_PAGE, prefetchTiles = -1)
     }
 }
