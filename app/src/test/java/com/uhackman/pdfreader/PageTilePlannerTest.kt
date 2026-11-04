@@ -40,7 +40,7 @@ class PageTilePlannerTest {
 
     @Test
     fun visibleViewportRequestsOnlyIntersectingTilesWithoutPrefetch() {
-        val region = PageTileRegion(0.5f, 0.5f, 0.75f, 0.75f)
+        val region = PageTileRegion(0.5f, 0.5f, 1f, 1f)
         val tiles = PageTilePlanner.planVisible(2048, 2048, region, 512, prefetchTiles = 0)
         assertEquals(4, tiles.size)
         assertEquals(PageTileBounds(1024, 1024, 1536, 1536), tiles.first())
@@ -91,7 +91,7 @@ class PageTilePlannerTest {
             1000f, 1000f, 0f, 0f, 1000f, 1000f,
             2f, -250f, -250f
         )
-        assertEquals(PageTileRegion(0.375f, 0.375f, 0.875f, 0.875f), panned)
+        assertEquals(PageTileRegion(0.125f, 0.125f, 0.625f, 0.625f), panned)
     }
 
     @Test
