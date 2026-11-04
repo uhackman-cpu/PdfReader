@@ -54,6 +54,14 @@ class SelectablePageTextView(context: Context) : TextView(context) {
         suppressSelectionCallback = false
     }
 
+    fun showMessage(index: Int, message: String) {
+        suppressSelectionCallback = true
+        pageIndex = index
+        pageText = null
+        text = message
+        suppressSelectionCallback = false
+    }
+
     fun selectText(start: Int, end: Int) {
         val value = pageText?.text ?: return
         val first = start.coerceIn(0, value.length)
