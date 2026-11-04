@@ -101,7 +101,7 @@ class PdfPageView @JvmOverloads constructor(
                 parent?.requestDisallowInterceptTouchEvent(false)
                 val targetDpi = (BASE_RENDER_DPI * zoom).coerceAtMost(MAX_RENDER_DPI)
                 if (targetDpi > BASE_RENDER_DPI * 1.25f) {
-                    onResolutionRequested?.invoke(targetDpi, visiblePageRegion() ?: PageTileRegion.FULL_PAGE)
+                    visiblePageRegion()?.let { region -> onResolutionRequested?.invoke(targetDpi, region) }
                 }
             }
         }
@@ -677,10 +677,9 @@ class PdfPageView @JvmOverloads constructor(
                     invalidate()
                     if (zoom > 1.01f) {
                         val targetDpi = (BASE_RENDER_DPI * zoom).coerceAtMost(MAX_RENDER_DPI)
-                        onResolutionRequested?.invoke(
-                            targetDpi,
-                            visiblePageRegion() ?: PageTileRegion.FULL_PAGE
-                        )
+                        visiblePageRegion()?.let { region ->
+                            onResolutionRequested?.invoke(targetDpi, region)
+                        }
                     }
                 } else if (pendingTextPress && !selecting) {
                     when (GestureArbitration.classify(
