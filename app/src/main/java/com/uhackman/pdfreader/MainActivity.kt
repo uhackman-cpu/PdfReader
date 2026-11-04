@@ -331,9 +331,10 @@ class MainActivity : Activity() {
         applyPendingPageState(pageIndex, view)
         applySelectionToBoundPage(pageIndex, view)
         if (requestedDpi > baseDpi * 1.08f) {
-            val visibleRegion = view.visiblePageRegion() ?: PageTileRegion.FULL_PAGE
-            if (!displayCachedTiles(active, pageIndex, requestedDpi, visibleRegion)) {
-                requestPageTiles(pageIndex, requestedDpi, visibleRegion)
+            view.visiblePageRegion()?.let { visibleRegion ->
+                if (!displayCachedTiles(active, pageIndex, requestedDpi, visibleRegion)) {
+                    requestPageTiles(pageIndex, requestedDpi, visibleRegion)
+                }
             }
         }
         if (cached == null) requestPageRender(pageIndex, baseDpi)
@@ -747,8 +748,8 @@ class MainActivity : Activity() {
                 val pageView = boundPageViews.entries.firstOrNull {
                     it.value.pageIndex == index
                 }?.key
-                val region = pageView?.visiblePageRegion() ?: PageTileRegion.FULL_PAGE
-                if (!displayCachedTiles(active, index, dpi, region)) {
+                val region = pageView?.visiblePageRegion()
+                if (region != null && !displayCachedTiles(active, index, dpi, region)) {
                     requestPageTiles(index, dpi, region)
                 }
             }
