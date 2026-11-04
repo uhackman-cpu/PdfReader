@@ -47,6 +47,7 @@ object PageCoordinateTransform {
         offsetY: Float
     ): CoordinatePoint? {
         if (!screenX.isFinite() || !screenY.isFinite() || !zoom.isFinite() ||
+            !offsetX.isFinite() || !offsetY.isFinite() ||
             zoom <= 0f || !left.isFinite() || !top.isFinite() ||
             !right.isFinite() || !bottom.isFinite() ||
             right <= left || bottom <= top
@@ -54,10 +55,12 @@ object PageCoordinateTransform {
 
         val viewX = (screenX - offsetX) / zoom
         val viewY = (screenY - offsetY) / zoom
-        return CoordinatePoint(
-            (viewX - left) / (right - left),
-            (viewY - top) / (bottom - top)
-        )
+        if (!viewX.isFinite() || !viewY.isFinite()) return null
+
+        val normalizedX = (viewX - left) / (right - left)
+        val normalizedY = (viewY - top) / (bottom - top)
+        if (!normalizedX.isFinite() || !normalizedY.isFinite()) return null
+        return CoordinatePoint(normalizedX, normalizedY)
     }
 }
 
