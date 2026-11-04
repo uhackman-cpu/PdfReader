@@ -12,7 +12,7 @@ class PdfPageAdapter(
     private val onPageRecycled: (Int, PdfPageView) -> Unit,
     private val onSelectionChanged: (Int, Int, Int) -> Unit,
     private val onDocumentSelectionGesture: (Int, SelectionGestureEvent) -> Unit,
-    private val onResolutionRequested: (Int, Float) -> Unit
+    private val onResolutionRequested: (Int, Float, PageTileRegion) -> Unit
 ) : RecyclerView.Adapter<PdfPageAdapter.PageHolder>() {
 
     init {
@@ -60,8 +60,8 @@ class PdfPageAdapter(
         holder.pageView.onDocumentSelectionGesture = { event ->
             onDocumentSelectionGesture(position, event)
         }
-        holder.pageView.onResolutionRequested = { dpi ->
-            onResolutionRequested(position, dpi)
+        holder.pageView.onResolutionRequested = { dpi, region ->
+            onResolutionRequested(position, dpi, region)
         }
         onPageBound(position, holder.pageView)
     }
