@@ -6,6 +6,7 @@ import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.pdmodel.font.PDType1Font
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PdfTextExtractorTest {
@@ -24,8 +25,12 @@ class PdfTextExtractorTest {
             )
             val displayed = displayedPageDimensions(400f, 600f, rotation)
 
+            assertEquals(displayed.x, reference.widthPoints, 0.01f)
+            assertEquals(displayed.y, reference.heightPoints, 0.01f)
             assertEquals(displayed.x, shifted.widthPoints, 0.01f)
             assertEquals(displayed.y, shifted.heightPoints, 0.01f)
+            assertTrue("Expected positioned glyphs at rotation $rotation", reference.glyphs.isNotEmpty())
+            assertTrue("Expected extracted text at rotation $rotation", reference.text.contains("CROP"))
             assertEquals(reference.text, shifted.text)
             assertEquals(reference.glyphs.size, shifted.glyphs.size)
 
