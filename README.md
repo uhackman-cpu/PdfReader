@@ -7,7 +7,7 @@ A native Android PDF reader built independently from documented PDF-reading beha
 - Opens PDFs through Android's document picker.
 - Offers a **Text mode** backed by the PDF's extracted text in a native Android selectable `TextView`: long-press, drag selection handles, Android's Copy action, and reflowable reading. The selected UTF-16 range maps back to the original PDF glyph range so it can be highlighted and annotated.
 - The page-layout mode still rasterizes the page for visual fidelity, while keeping a separate positioned text/glyph model for its custom selection overlays. Use Text mode for native Android text selection and copying.
-- Renders actual PDF pages with PDFBox-Android, not a screenshot-only page model.
+- Renders visual pages with Android's platform PDFium renderer when its displayed CropBox dimensions match the positioned-text geometry, with PDFBox-Android as a per-page fallback. PDFBox remains the real text/glyph extraction engine.
 - Extracts selectable text positions; long-press selects a Unicode-aware word, finger-drag extends selection, and endpoint handles refine it.
 - Uses a per-page spatial index for responsive glyph hit-testing on dense text pages.
 - Searches extracted text across the document and jumps to matches.
@@ -37,6 +37,7 @@ The app uses PDFBox-Android, an Apache-2.0 Android port of Apache PDFBox. PDFRen
 - PdfPageAdapter: recycled continuous page stream with per-page viewport sizing.
 - PageTextCache: bounded weighted cache for extracted text and glyph geometry.
 - PageBitmapCache: bounded lease-aware bitmap cache for base pages and visible high-resolution tiles.
+- AndroidPdfRasterRenderer: uses Android PDFium for image-rich page rasters and visible-region tiles when page dimensions match the text coordinate space; PDFBox rasterization remains the compatibility fallback.
 - PdfRegionTileRenderer: renders requested 512-pixel viewport tiles directly into small bitmaps using PDFRenderer's crop/rotation-aware page transform.
 - MainActivity: document picker, lazy page loading, streaming search, highlight list, and save-note flow.
 
