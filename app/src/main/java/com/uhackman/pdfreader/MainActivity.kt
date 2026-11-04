@@ -625,6 +625,10 @@ class MainActivity : Activity() {
             nextKeys.add(item.key)
         }
 
+        if (binding.tileKeys == nextKeys) {
+            nextKeys.forEach(bitmapCache::release)
+            return nextKeys.size == desiredBounds.size
+        }
         view.replaceTiles(acquired)
         boundPageViews[view] = binding.copy(tileKeys = nextKeys)
         binding.tileKeys.filterNot { it in nextKeys }.forEach(bitmapCache::release)
