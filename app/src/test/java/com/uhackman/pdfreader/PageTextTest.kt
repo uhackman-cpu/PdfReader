@@ -205,6 +205,64 @@ class PageTextTest {
         assertEquals(CoordinatePoint(800f, 600f), displayedPageDimensions(600f, 800f, -90))
     }
 
+
+    @Test
+    fun inversePageTransformRejectsNonFinitePanOffsetsAndOverflow() {
+        assertNull(
+            PageCoordinateTransform.toNormalized(
+                10f, 10f, 0f, 0f, 100f, 100f, 1f, Float.NaN, 0f
+            )
+        )
+        assertNull(
+            PageCoordinateTransform.toNormalized(
+                10f, 10f, 0f, 0f, 100f, 100f, 1f, 0f, Float.POSITIVE_INFINITY
+            )
+        )
+        assertNull(
+            PageCoordinateTransform.toNormalized(
+                Float.MAX_VALUE, 10f, 0f, 0f, 100f, 100f, 1f, -Float.MAX_VALUE, 0f
+            )
+        )
+    }
+
+    @Test
+    fun rotatedCropBoxDimensionsRoundTripAllNormalizedCorners() {
+        val corners = listOf(
+            CoordinatePoint(0f, 0f),
+            CoordinatePoint(1f, 0f),
+            CoordinatePoint(0f, 1f),
+            CoordinatePoint(1f, 1f)
+        )
+
+        for (rotation in listOf(0, 90, 180, 270)) {
+            val displayed = displayedPageDimensions(400f, 600f, rotation)
+            val left = 11f
+            val top = 23f
+            val right = left + displayed.x
+            val bottom = top + displayed.y
+
+            corners.forEach { corner ->
+                val screen = PageCoordinateTransform.toScreen(
+                    corner.x, corner.y,
+                    left, top, right, bottom,
+                    zoom = 1.75f,
+                    offsetX = -19f,
+                    offsetY = 31f
+                )
+                val normalized = PageCoordinateTransform.toNormalized(
+                    screen.x, screen.y,
+                    left, top, right, bottom,
+                    zoom = 1.75f,
+                    offsetX = -19f,
+                    offsetY = 31f
+                )
+
+                assertEquals(corner.x, normalized?.x ?: -1f, 0.0001f)
+                assertEquals(corner.y, normalized?.y ?: -1f, 0.0001f)
+            }
+        }
+    }
+
     private fun pageFromText(text: String): PageText {
         val glyphs = mutableListOf<Glyph>()
         var charIndex = 0
