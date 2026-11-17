@@ -1,0 +1,113 @@
+{
+  "document": "Cloudflare Tunnel — Current Batch Audited Chronology",
+  "batch_id": "cf_tunnel_2026-10-01_evidence_1000333221",
+  "revision": 2,
+  "audit_date": "2026-10-07",
+  "audit_status": "AUDITED_WITH_CORRECTIONS",
+  "source_evidence": {
+    "filename": "1000333221.jpg",
+    "type": "screenshot",
+    "visible_terminal_time": "23:21",
+    "log_timestamp": "2026-10-01T17:51:25Z",
+    "note": "The screenshot is evidence of the displayed log only; it is not proof of a fresh 2026-10-07 tunnel runtime."
+  },
+  "chronology": [
+    {
+      "step": 1,
+      "event": "Tunnel precheck started",
+      "evidence": "Cloudflared precheck entries are visible."
+    },
+    {
+      "step": 2,
+      "event": "UDP/QUIC connectivity passed",
+      "evidence": "precheck component UDP Connectivity; details QUIC connection successful; status=pass."
+    },
+    {
+      "step": 3,
+      "event": "TCP/HTTP2 connectivity passed",
+      "evidence": "precheck component TCP Connectivity; details HTTP/2 connection successful; status=pass."
+    },
+    {
+      "step": 4,
+      "event": "Cloudflare API reachability passed",
+      "evidence": "precheck component Cloudflare API; details API is reachable; status=pass."
+    },
+    {
+      "step": 5,
+      "event": "Precheck completed without hard failure",
+      "evidence": "precheck complete; hard_fail=false; suggested_protocol=quic."
+    },
+    {
+      "step": 6,
+      "event": "Tunnel selected QUIC with curve preferences",
+      "evidence": "X25519MLKEM768, CurveID(65074), CurveP256 are shown."
+    },
+    {
+      "step": 7,
+      "event": "First tunnel connection registered",
+      "evidence": "Registered tunnel connection; location=del02; protocol=quic."
+    },
+    {
+      "step": 8,
+      "event": "Ingress configuration received",
+      "evidence": "hostname mcp.gpsrginfo.in routes to service http://127.0.0.1:8787; fallback http_status:404."
+    },
+    {
+      "step": 9,
+      "event": "Second tunnel connection registered",
+      "evidence": "Registered tunnel connection; location=del03; protocol=quic."
+    },
+    {
+      "step": 10,
+      "event": "Third tunnel connection registered",
+      "evidence": "Registered tunnel connection; location=del02; protocol=quic."
+    },
+    {
+      "step": 11,
+      "event": "Fourth tunnel connection registered",
+      "evidence": "Registered tunnel connection; location=del03; protocol=quic."
+    },
+    {
+      "step": 12,
+      "event": "Evidence boundary recorded",
+      "evidence": "The screenshot proves prechecks, four QUIC registrations, and the ingress mapping, but does not prove local MCP health, public /health reachability, or an end-to-end MCP request."
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "HIGH",
+      "finding": "Tunnel connectivity is proven by the screenshot, but origin application health is not proven.",
+      "correction": "Verify http://127.0.0.1:8787/health from Termux."
+    },
+    {
+      "id": "F2",
+      "severity": "MEDIUM",
+      "finding": "Ingress configuration is visible, but no end-to-end request through mcp.gpsrginfo.in is shown.",
+      "correction": "Verify https://mcp.gpsrginfo.in/health and perform one actual MCP request."
+    },
+    {
+      "id": "F3",
+      "severity": "LOW",
+      "finding": "The visible Cloudflare log is dated 2026-10-01 while the audit date is 2026-10-07.",
+      "correction": "Use a fresh current log/request result before marking the tunnel as currently healthy."
+    }
+  ],
+  "verification": {
+    "network_precheck": "PASS",
+    "tunnel_registration": "PASS",
+    "ingress_configuration": "PASS",
+    "local_origin_health": "NOT_VERIFIED",
+    "public_health": "NOT_VERIFIED",
+    "end_to_end_mcp_request": "NOT_VERIFIED",
+    "full_current_success": false,
+    "rule": "Only an end-to-end verified result counts as full success."
+  },
+  "overall_status": "TUNNEL_CONNECTED_AND_CONFIGURED_ORIGIN_REQUIRES_END_TO_END_VERIFICATION",
+  "next_correction_priority": [
+    "Check local MCP /health on 127.0.0.1:8787.",
+    "Check public mcp.gpsrginfo.in/health.",
+    "Perform one MCP request through the public endpoint.",
+    "Capture fresh current logs and re-audit if needed."
+  ]
+}

@@ -1,0 +1,113 @@
+{
+  "document": "Cloudflare Tunnel — Current Batch Audited Chronology",
+  "batch_id": "cf_tunnel_2026-10-01_evidence_1000333221",
+  "revision": 3,
+  "audit_date": "2026-10-07",
+  "audit_status": "AUDITED_WITH_CORRECTIONS",
+  "source_evidence": {
+    "filename": "1000333221.jpg",
+    "type": "screenshot",
+    "visible_terminal_time": "23:21",
+    "log_timestamp_range": "2026-10-01T17:51:25Z–2026-10-01T17:51:28Z",
+    "evidence_scope": "Displayed cloudflared log only"
+  },
+  "chronology": [
+    {
+      "step": 1,
+      "event": "Tunnel precheck started",
+      "evidence": "Cloudflared precheck entries are visible."
+    },
+    {
+      "step": 2,
+      "event": "UDP/QUIC connectivity passed",
+      "evidence": "UDP Connectivity: QUIC connection successful; status=pass; region1/region2 v2 argotunnel targets."
+    },
+    {
+      "step": 3,
+      "event": "TCP/HTTP2 connectivity passed",
+      "evidence": "TCP Connectivity: HTTP/2 connection successful; status=pass; region1/region2 v2 argotunnel targets."
+    },
+    {
+      "step": 4,
+      "event": "Cloudflare API reachable",
+      "evidence": "Cloudflare API: API is reachable; status=pass; target api.cloudflare.com:443."
+    },
+    {
+      "step": 5,
+      "event": "Precheck completed without hard failure",
+      "evidence": "hard_fail=false; suggested_protocol=quic."
+    },
+    {
+      "step": 6,
+      "event": "Tunnel curve preferences recorded",
+      "evidence": "X25519MLKEM768, CurveID(65074), CurveP256; edge IPs shown include 198.41.192.77 and 198.41.200.43."
+    },
+    {
+      "step": 7,
+      "event": "First QUIC connection registered",
+      "evidence": "connection=a92ad4ff-925e-420d-bb4b-120557a8904; location=del02; protocol=quic; IP=198.41.192.77."
+    },
+    {
+      "step": 8,
+      "event": "Ingress configuration applied",
+      "evidence": "mcp.gpsrginfo.in → http://127.0.0.1:8787; fallback http_status:404; warp-routing disabled."
+    },
+    {
+      "step": 9,
+      "event": "Second QUIC connection registered",
+      "evidence": "connection=516c23cb-fc30-48fd-bbab-95c88fd8765; location=del03; protocol=quic; IP=198.41.200.43."
+    },
+    {
+      "step": 10,
+      "event": "Third QUIC connection registered",
+      "evidence": "connection=8d46a715-15a3-441c-891a-7c98c695204; location=del02; protocol=quic; IP=198.41.192.7."
+    },
+    {
+      "step": 11,
+      "event": "Fourth QUIC connection registered",
+      "evidence": "connection=1b611647-7a19-4123-a5f1-5eb6703e46f; location=del03; protocol=quic; IP=198.41.200.53."
+    },
+    {
+      "step": 12,
+      "event": "Evidence boundary confirmed",
+      "evidence": "Screenshot establishes tunnel prechecks, four QUIC registrations and ingress configuration, but does not establish current local origin health, public /health, or an end-to-end MCP request."
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "HIGH",
+      "finding": "Origin MCP service health is not evidenced by this screenshot.",
+      "correction": "Check local http://127.0.0.1:8787/health."
+    },
+    {
+      "id": "F2",
+      "severity": "MEDIUM",
+      "finding": "No external request through mcp.gpsrginfo.in is shown.",
+      "correction": "Check https://mcp.gpsrginfo.in/health and one MCP request."
+    },
+    {
+      "id": "F3",
+      "severity": "LOW",
+      "finding": "Evidence log is from 2026-10-01, while this audit is 2026-10-07.",
+      "correction": "Capture fresh current tunnel logs before declaring current runtime healthy."
+    }
+  ],
+  "verification": {
+    "network_precheck": "PASS",
+    "tunnel_registration": "PASS — 4 QUIC connections",
+    "ingress_configuration": "PASS",
+    "local_origin_health": "NOT_VERIFIED",
+    "public_health": "NOT_VERIFIED",
+    "end_to_end_mcp_request": "NOT_VERIFIED",
+    "full_current_success": false,
+    "success_rule": "Only end-to-end verified evidence counts as full success."
+  },
+  "overall_status": "TUNNEL_CONNECTED_AND_CONFIGURED_ORIGIN_REQUIRES_END_TO_END_VERIFICATION",
+  "next_correction_priority": [
+    "Verify local MCP /health.",
+    "Verify public mcp.gpsrginfo.in/health.",
+    "Verify one MCP request through the public endpoint.",
+    "Capture fresh current logs and audit again."
+  ]
+}

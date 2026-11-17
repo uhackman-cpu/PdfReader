@@ -1,0 +1,127 @@
+{
+  "document": "Cloudflare Tunnel — Current Batch Audited Chronology",
+  "batch_id": "cf_tunnel_2026-10-01_evidence_1000333221",
+  "revision": 1,
+  "audit_date": "2026-10-07",
+  "audit_status": "AUDITED_WITH_CORRECTIONS",
+  "source_evidence": [
+    "1000333221.jpg"
+  ],
+  "evidence_rule": "Only what is visibly established in the supplied screenshot is marked CONFIRMED. Configuration success is not treated as proof of later application reachability.",
+  "chronology": [
+    {
+      "seq": 1,
+      "event": "Tunnel precheck started",
+      "status": "CONFIRMED",
+      "result": "The screenshot shows Cloudflare tunnel prechecks running for UDP/QUIC, TCP/HTTP2 and Cloudflare API connectivity."
+    },
+    {
+      "seq": 2,
+      "event": "UDP/QUIC connectivity precheck passed",
+      "status": "CONFIRMED",
+      "result": "The log shows component=UDP Connectivity with details=QUIC connection successful and status=pass."
+    },
+    {
+      "seq": 3,
+      "event": "TCP/HTTP2 connectivity precheck passed",
+      "status": "CONFIRMED",
+      "result": "The log shows component=TCP Connectivity with details=HTTP/2 connection successful and status=pass."
+    },
+    {
+      "seq": 4,
+      "event": "Cloudflare API reachability precheck passed",
+      "status": "CONFIRMED",
+      "result": "The log shows component=Cloudflare API with details=API is reachable and status=pass."
+    },
+    {
+      "seq": 5,
+      "event": "Tunnel precheck completed",
+      "status": "CONFIRMED",
+      "result": "The log shows precheck complete with hard_fail=false and suggested_protocol=quic."
+    },
+    {
+      "seq": 6,
+      "event": "Tunnel connection curve preference selected",
+      "status": "CONFIRMED",
+      "result": "The log records CurveID(65074) with connection preference output and a Cloudflare edge IP."
+    },
+    {
+      "seq": 7,
+      "event": "First tunnel connection registered",
+      "status": "CONFIRMED",
+      "result": "A Registered tunnel connection entry is visible with location=del02 and protocol=quic."
+    },
+    {
+      "seq": 8,
+      "event": "Cloudflare configuration pushed to tunnel",
+      "status": "CONFIRMED",
+      "result": "The log shows Updated to new configuration, including ingress for hostname mcp.gpsrginfo.in to service http://127.0.0.1:8787 and a fallback http_status:404."
+    },
+    {
+      "seq": 9,
+      "event": "Second tunnel connection registered",
+      "status": "CONFIRMED",
+      "result": "A second Registered tunnel connection is visible with location=del03 and protocol=quic."
+    },
+    {
+      "seq": 10,
+      "event": "Third tunnel connection registered",
+      "status": "CONFIRMED",
+      "result": "A third Registered tunnel connection is visible with location=del02 and protocol=quic."
+    },
+    {
+      "seq": 11,
+      "event": "Fourth tunnel connection registered",
+      "status": "CONFIRMED",
+      "result": "A fourth Registered tunnel connection is visible with location=del03 and protocol=quic."
+    },
+    {
+      "seq": 12,
+      "event": "Tunnel evidence classification",
+      "status": "CONFIRMED_WITH_LIMITATION",
+      "result": "The screenshot proves successful tunnel prechecks, four registered QUIC connections, and the pushed ingress configuration. It does not by itself prove that the local MCP service on 127.0.0.1:8787 was healthy at that exact moment or that an external /health request succeeded."
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "high",
+      "finding": "Tunnel connectivity is proven, but origin application health is not proven by this screenshot alone.",
+      "correction": "Verify local http://127.0.0.1:8787/health and externally verify https://mcp.gpsrginfo.in/health."
+    },
+    {
+      "id": "F2",
+      "severity": "medium",
+      "finding": "The screenshot shows ingress configuration but not a successful request flowing through the ingress to the MCP service.",
+      "correction": "Perform one end-to-end request and inspect the returned JSON/application status."
+    },
+    {
+      "id": "F3",
+      "severity": "low",
+      "finding": "The visible log is historical evidence dated 2026-10-01, not proof of current 2026-10-07 runtime state.",
+      "correction": "Use fresh tunnel logs when making a current-state claim."
+    }
+  ],
+  "verification_rule": {
+    "network_precheck": "passed",
+    "tunnel_registration": "passed",
+    "ingress_configuration": "confirmed",
+    "origin_health": "not established by screenshot",
+    "external_mcp_reachability": "not established by screenshot",
+    "only_end_to_end_verified_counts_as_full_success": true
+  },
+  "overall_status": "TUNNEL_CONNECTED_AND_CONFIGURED_ORIGIN_REQUIRES_END_TO_END_VERIFICATION",
+  "next_correction_priority": [
+    "verify local MCP /health",
+    "verify public mcp.gpsrginfo.in/health",
+    "verify one MCP request through the public endpoint",
+    "use fresh logs before claiming current tunnel state"
+  ],
+  "audit_integrity": {
+    "chronology_sequence": "continuous 1..12",
+    "unsupported_success_claims": false,
+    "historical_evidence_labeled": true,
+    "origin_health_overclaimed": false,
+    "end_to_end_success_overclaimed": false
+  }
+}

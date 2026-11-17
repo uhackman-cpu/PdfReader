@@ -1,0 +1,376 @@
+{
+  "document": "Universal Mobile Control — Audited Batch Chronology",
+  "batch_id": "umc_2026-10-07_current_batch",
+  "revision": 6,
+  "audited_at": "2026-10-07",
+  "audit_status": "AUDITED_WITH_CORRECTIONS",
+  "audit_basis": {
+    "current_source": [
+      "VisionAccessibilityService.java",
+      "accessibility_service_config.xml",
+      "AndroidManifest.xml",
+      "app/build.gradle"
+    ],
+    "historical_evidence": [
+      "README.md",
+      "chronology_audit_2026-10-07.json",
+      "chronology_batch_2026-10-07_audited_v5.json"
+    ],
+    "rule": "Current source is authoritative for implementation facts. Historical runtime evidence is retained but is not promoted to current PASS unless the current runtime is freshly verified."
+  },
+  "project": {
+    "name": "Universal Mobile Control",
+    "package": "com.gpsrginfo.universalcontrol",
+    "path": "/storage/emulated/0/Android App/UniversalMobileControl/",
+    "bridge": "http://127.0.0.1:8765",
+    "android_reference": "Android 16 / API 36",
+    "versionCode": 1,
+    "versionName": "0.1.0"
+  },
+  "current_source_truth": {
+    "endpoints": [
+      "/health",
+      "/screen",
+      "/scan",
+      "/action/start",
+      "/action/stop",
+      "/action/status",
+      "/tap",
+      "/swipe",
+      "/back",
+      "/type"
+    ],
+    "not_implemented": [
+      "/home"
+    ],
+    "vision": {
+      "screenshot": true,
+      "accessibility_ui_tree": true,
+      "max_ui_nodes": 500,
+      "max_tree_depth": 35,
+      "ocr": [
+        "ML Kit Latin 16.0.1",
+        "ML Kit Devanagari 16.0.1"
+      ],
+      "screen_data": "latestJson cache"
+    },
+    "accessibility": {
+      "canRetrieveWindowContent": true,
+      "canTakeScreenshot": true,
+      "canPerformGestures": true,
+      "flags": [
+        "flagReportViewIds",
+        "flagRetrieveInteractiveWindows",
+        "flagIncludeNotImportantViews"
+      ],
+      "onAccessibilityEvent": "currently empty"
+    },
+    "gesture": {
+      "implementation": "AccessibilityService.dispatchGesture",
+      "callback_handler": "HandlerThread UMC-GestureCallbacks",
+      "tap_wait_ms": 3000,
+      "swipe_wait_ms": 6000,
+      "outcomes": [
+        "completed",
+        "cancelled",
+        "timeout"
+      ]
+    },
+    "action_mode": {
+      "ocr_interval_ms": 3000,
+      "post_action_refresh_delay_ms": 400,
+      "scan_single_flight_guard": false
+    },
+    "typing": {
+      "mechanism": "AccessibilityNodeInfo.ACTION_SET_TEXT",
+      "requires_focused_editable_node": true
+    },
+    "bridge_semantics": {
+      "screen_cached": true,
+      "scan_asynchronous": true,
+      "http_status_always_200": true,
+      "json_status_message_authoritative": true
+    },
+    "lifecycle": {
+      "gesture_callback_thread_stopped_in_onDestroy": true,
+      "ocr_executor_explicit_shutdown": false,
+      "local_bridge_explicit_stop": false
+    }
+  },
+  "chronology": [
+    {
+      "sequence": 1,
+      "stage": "goal_and_architecture",
+      "status": "CONFIRMED",
+      "events": [
+        "AccessibilityService selected as the practical control layer.",
+        "Termux MCP -> local HTTP bridge -> AccessibilityService architecture established.",
+        "Screen observation designed around accessibility UI tree, screenshot and OCR."
+      ]
+    },
+    {
+      "sequence": 2,
+      "stage": "source_and_bridge",
+      "status": "CONFIRMED",
+      "events": [
+        "MainActivity and VisionAccessibilityService are part of the project.",
+        "Local bridge is bound to 127.0.0.1:8765.",
+        "UI elements expose text/description/bounds and interaction state.",
+        "Latin and Devanagari OCR are implemented."
+      ]
+    },
+    {
+      "sequence": 3,
+      "stage": "debug_build",
+      "status": "HISTORICAL_CONFIRMED",
+      "events": [
+        "UniversalMobileControl-debug.apk was produced.",
+        "Version recorded as 0.1.0.",
+        "Historical project record reports Gradle 8.13."
+      ],
+      "limitation": "The APK file timestamp alone does not prove the installed AccessibilityService revision."
+    },
+    {
+      "sequence": 4,
+      "stage": "screen_inspection",
+      "status": "HISTORICAL_CONFIRMED",
+      "events": [
+        "Earlier screen tests used 1080x2400 coordinates.",
+        "Accessibility UI data and OCR were used to locate controls."
+      ],
+      "correction": "1080x2400 must not be treated as a permanent coordinate system; rediscover the current screen on every fresh scan."
+    },
+    {
+      "sequence": 5,
+      "stage": "bridge_api",
+      "status": "CURRENT_SOURCE_CONFIRMED",
+      "events": [
+        "Current bridge exposes health, screen, scan, Action Mode, tap, swipe, back and type endpoints.",
+        "Home is not implemented as a bridge endpoint.",
+        "/screen is cached and /scan is asynchronous.",
+        "Application-level errors can still be returned with HTTP 200."
+      ]
+    },
+    {
+      "sequence": 6,
+      "stage": "firefox_input_test",
+      "status": "HISTORICAL_UNVERIFIED_EFFECT",
+      "events": [
+        "Historical editable Ask anything node was located around bounds 313,1865 to 1049,1957.",
+        "Tap around 680,1910 was dispatched.",
+        "Keyboard/focus change was not independently verified."
+      ],
+      "correction": "Dispatch or HTTP success is not equivalent to verified target activation."
+    },
+    {
+      "sequence": 7,
+      "stage": "swipe_parameter_correction",
+      "status": "CONFIRMED",
+      "events": [
+        "An earlier request used start_x/start_y/end_x/end_y and failed because x1 was missing.",
+        "The current bridge format is x1,y1,x2,y2 with optional duration."
+      ]
+    },
+    {
+      "sequence": 8,
+      "stage": "back_and_home",
+      "status": "MIXED",
+      "events": [
+        "Back uses GLOBAL_ACTION_BACK and was user-confirmed working in an earlier test.",
+        "Home endpoint was previously reported as unknown and remains absent from current source."
+      ],
+      "correction": "Do not claim a /home bridge command until it is implemented and runtime-tested."
+    },
+    {
+      "sequence": 9,
+      "stage": "gesture_callback_implementation",
+      "status": "SOURCE_CONFIRMED_RETEST_REQUIRED",
+      "events": [
+        "Tap and swipe use GestureResultCallback.",
+        "CountDownLatch and AtomicReference distinguish completion, cancellation and timeout.",
+        "A dedicated UMC-GestureCallbacks HandlerThread is used."
+      ],
+      "audit_note": "A callback timeout proves only that completion/cancellation was not observed within the configured wait period; it does not by itself prove that no gesture reached the target."
+    },
+    {
+      "sequence": 10,
+      "stage": "accessibility_configuration",
+      "status": "CURRENT_SOURCE_CONFIRMED",
+      "events": [
+        "canPerformGestures=true.",
+        "canRetrieveWindowContent=true.",
+        "canTakeScreenshot=true.",
+        "Required interactive-window/view-id accessibility flags are present."
+      ],
+      "correction": "Configuration proves declared capability, not current service activation or successful target UI change."
+    },
+    {
+      "sequence": 11,
+      "stage": "recorded_gesture_regression",
+      "status": "RETEST_REQUIRED",
+      "events": [
+        "Latest known recorded tap test returned tap callback timeout.",
+        "Latest known recorded swipe test returned swipe callback timeout."
+      ],
+      "possible_causes": [
+        "Current APK/service revision may not be the revision being exercised.",
+        "Accessibility Service may need disable/re-enable after installation.",
+        "Gesture callback delivery may still be failing.",
+        "Concurrent scan/OCR work may interfere with action verification."
+      ]
+    },
+    {
+      "sequence": 12,
+      "stage": "historical_native_youtube_e2e",
+      "status": "HISTORICAL_PASS_REQUIRES_CURRENT_BUILD_RETEST",
+      "events": [
+        "Historical README records Home -> app drawer -> native YouTube -> search -> video selection -> ad handling -> playback verification.",
+        "The recorded final state included visible playback controls and video metadata."
+      ],
+      "correction": "Retain as historical evidence only; do not use it as proof of the currently installed revision."
+    },
+    {
+      "sequence": 13,
+      "stage": "scan_concurrency_audit",
+      "status": "NEEDS_CORRECTION",
+      "events": [
+        "Action Mode starts OCR immediately and schedules refreshes every 3000 ms.",
+        "tap/swipe start Action Mode before dispatching the gesture.",
+        "Manual scan and periodic scan can therefore overlap the action lifecycle.",
+        "No single-flight scan guard is currently present."
+      ],
+      "correction": "Dispatch the action first, then perform a controlled post-action scan; serialize or guard scan execution."
+    },
+    {
+      "sequence": 14,
+      "stage": "resource_lifecycle_audit",
+      "status": "NEEDS_CORRECTION",
+      "events": [
+        "Gesture callback HandlerThread is stopped in onDestroy.",
+        "OCR executor is not explicitly shut down in onDestroy.",
+        "Local bridge thread/server has no explicit service-lifecycle stop mechanism."
+      ],
+      "correction": "Add deterministic executor shutdown and bridge/server cleanup during service destruction."
+    },
+    {
+      "sequence": 15,
+      "stage": "revision_6_reaudit",
+      "status": "AUDITED_WITH_CORRECTIONS",
+      "events": [
+        "Prior chronology was rechecked against the available current-batch audit evidence.",
+        "Unsupported PASS claims were not promoted.",
+        "Historical results were explicitly separated from current-runtime proof.",
+        "Verification requirements were tightened to require fresh post-action UI evidence."
+      ]
+    }
+  ],
+  "audit_findings": [
+    {
+      "id": "F1",
+      "severity": "CRITICAL",
+      "finding": "Tap/swipe completion is not currently proven by the latest recorded runtime tests.",
+      "correction": "Require gesture callback completion/cancellation and a fresh post-action scan proving the expected UI state before PASS."
+    },
+    {
+      "id": "F2",
+      "severity": "HIGH",
+      "finding": "Historical YouTube success conflicts with the fact that the current installed revision is not proven and later gesture tests timed out.",
+      "correction": "Keep historical evidence but require a current-build retest."
+    },
+    {
+      "id": "F3",
+      "severity": "HIGH",
+      "finding": "Action Mode/manual scans can overlap.",
+      "correction": "Implement a single-flight scan guard or serialized scan queue."
+    },
+    {
+      "id": "F4",
+      "severity": "HIGH",
+      "finding": "tap/swipe start Action Mode before dispatch.",
+      "correction": "Separate action dispatch from verification refresh."
+    },
+    {
+      "id": "F5",
+      "severity": "MEDIUM",
+      "finding": "New ML Kit recognizers are created per scan.",
+      "correction": "Reuse long-lived recognizers and close them on service destruction."
+    },
+    {
+      "id": "F6",
+      "severity": "MEDIUM",
+      "finding": "onAccessibilityEvent is empty.",
+      "correction": "Optionally invalidate cached state from relevant accessibility events."
+    },
+    {
+      "id": "F7",
+      "severity": "MEDIUM",
+      "finding": "No /home endpoint exists.",
+      "correction": "Implement GLOBAL_ACTION_HOME endpoint only if required, then test it separately."
+    },
+    {
+      "id": "F8",
+      "severity": "MEDIUM",
+      "finding": "APK artifact does not prove installed-service provenance.",
+      "correction": "Record exact APK hash/version, install it, disable/re-enable Accessibility Service, then retest."
+    },
+    {
+      "id": "F9",
+      "severity": "MEDIUM",
+      "finding": "OCR executor lifecycle is incomplete.",
+      "correction": "Explicitly shut down the executor in onDestroy."
+    },
+    {
+      "id": "F10",
+      "severity": "LOW",
+      "finding": "Bridge lifecycle is not explicitly tied to service destruction.",
+      "correction": "Retain server/thread references and close/interupt them during destruction."
+    }
+  ],
+  "truth_table": {
+    "/health": "IMPLEMENTED; transport/readiness only.",
+    "/screen": "IMPLEMENTED; cached observation.",
+    "/scan": "IMPLEMENTED; asynchronous fresh-scan request.",
+    "/action/start": "IMPLEMENTED; periodic OCR refresh.",
+    "/action/stop": "IMPLEMENTED; stops periodic OCR refresh.",
+    "/action/status": "IMPLEMENTED; reports Action Mode state.",
+    "/tap": "IMPLEMENTED; current runtime completion requires retest.",
+    "/swipe": "IMPLEMENTED; current runtime completion requires retest.",
+    "/back": "IMPLEMENTED; earlier user-confirmed working.",
+    "/type": "IMPLEMENTED through focused editable AccessibilityNodeInfo; current effect not independently verified in this audit.",
+    "/home": "NOT IMPLEMENTED.",
+    "HTTP_200": "NOT sufficient proof of action success."
+  },
+  "verification_protocol": {
+    "level_1": "HTTP response received.",
+    "level_2": "Accessibility action accepted/dispatched.",
+    "level_3": "Gesture callback completed or cancelled.",
+    "level_4": "Fresh post-action scan proves the intended UI state.",
+    "final_rule": "Only level 4 counts as fully verified."
+  },
+  "final_audit_conclusion": {
+    "status": "PARTIALLY_PASSING_RETEST_REQUIRED",
+    "confirmed": [
+      "Accessibility-based screen/control architecture exists in the audited source.",
+      "Screenshot, UI-tree and OCR observation are implemented.",
+      "Gesture capability and dedicated callback HandlerThread are configured.",
+      "Back implementation exists and had an earlier user-confirmed test.",
+      "Historical native YouTube playback is documented."
+    ],
+    "not_currently_proven": [
+      "Reliable tap completion in the currently installed runtime.",
+      "Reliable swipe completion in the currently installed runtime.",
+      "A /home bridge endpoint.",
+      "That the historical YouTube PASS belongs to the currently installed APK/service revision."
+    ],
+    "next_validation_gate": [
+      "Record exact APK hash/version provenance.",
+      "Install/restart the exact current APK.",
+      "Disable/re-enable Accessibility Service if required.",
+      "Run fresh pre-state scan.",
+      "Execute one action.",
+      "Capture callback result.",
+      "Run a fresh post-action scan.",
+      "Promote to PASS only when the intended UI change is actually visible."
+    ]
+  }
+}

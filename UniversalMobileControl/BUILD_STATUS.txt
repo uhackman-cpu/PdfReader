@@ -1,0 +1,18 @@
+UMC 2.0 Hybrid — Build and validation status
+
+Completed in the ChatGPT runtime workspace:
+- Live MediaProjection frame capture pipeline with sampled visual-diff gating and throttled ML Kit OCR dispatch.
+- Unified screen state with OCR, Accessibility UI tree, active app context and stable element keys.
+- Text-based element click, native app launch, basic device info and optional notification access.
+- Bounded 20-step flow runner, stop/emergency-stop routes, and local JSONL action/session history.
+- Bearer-authenticated 127.0.0.1:8765 bridge.
+- Companion Termux MCP adapter, guarded patcher and activation script.
+- Static project validation and 5 Python adapter unit tests passed.
+
+Not completed / not verified:
+- Android APK compilation: not run because this runtime has no Android SDK, android.jar, Gradle executable or Gradle wrapper.
+- Installation and real-device validation on Vivo Android 16: not run.
+- Shizuku backend: intentionally deferred.
+- Production hardening: no TLS or per-client scopes; do not expose the loopback bridge directly to the public internet.
+
+The included source ZIP is not a verified APK release. Build and device QA are required before daily use.

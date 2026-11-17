@@ -1,0 +1,246 @@
+{
+  "document": "Universal Mobile Control — Current Batch Audit Chronology",
+  "audit_date": "2026-10-07",
+  "audit_revision": 2,
+  "basis": {
+    "source_files": [
+      "app/src/main/java/com/gpsrginfo/universalcontrol/VisionAccessibilityService.java",
+      "app/src/main/res/xml/accessibility_service_config.xml",
+      "app/src/main/AndroidManifest.xml",
+      "app/build.gradle"
+    ],
+    "artifact": "UniversalMobileControl-debug.apk",
+    "prior_chronology": "chronology_audit_2026-10-07.json",
+    "rule": "Source facts, runtime evidence and inference are kept separate."
+  },
+  "status": "AUDITED_WITH_CORRECTIONS",
+  "confirmed_source_facts": {
+    "package": "com.gpsrginfo.universalcontrol",
+    "local_bridge": "127.0.0.1:8765",
+    "endpoints": [
+      "/health",
+      "/screen",
+      "/scan",
+      "/action/start",
+      "/action/stop",
+      "/action/status",
+      "/tap",
+      "/swipe",
+      "/back",
+      "/type"
+    ],
+    "android": {
+      "compileSdk": 36,
+      "minSdk": 30,
+      "targetSdk": 35
+    },
+    "accessibility_capabilities": {
+      "canRetrieveWindowContent": true,
+      "canTakeScreenshot": true,
+      "canPerformGestures": true
+    },
+    "gesture_callback": {
+      "thread": "UMC-GestureCallbacks",
+      "implementation": "HandlerThread + Handler",
+      "tap_timeout_ms": 3000,
+      "swipe_timeout_ms": 6000
+    },
+    "screen_pipeline": {
+      "screenshot": true,
+      "ui_tree": true,
+      "max_ui_nodes": 500,
+      "max_tree_depth": 35,
+      "ocr": [
+        "Latin",
+        "Devanagari"
+      ],
+      "cached_result": "/screen returns latestJson"
+    },
+    "action_mode": {
+      "interval_ms": 3000,
+      "post_action_refresh_delay_ms": 400,
+      "status_endpoint": "/action/status"
+    },
+    "build": {
+      "versionCode": 1,
+      "versionName": "0.1.0",
+      "mlkit_latin": "16.0.1",
+      "mlkit_devanagari": "16.0.1"
+    }
+  },
+  "runtime_evidence": {
+    "back": {
+      "status": "USER_CONFIRMED_WORKING",
+      "evidence": "Earlier direct bridge test was reported by the user as working."
+    },
+    "tap": {
+      "status": "UNVERIFIED_FAILED_CALLBACK",
+      "evidence": "Latest known test returned 'tap callback timeout'."
+    },
+    "swipe": {
+      "status": "UNVERIFIED_FAILED_CALLBACK",
+      "evidence": "Latest known test returned 'swipe callback timeout'."
+    },
+    "installation": {
+      "status": "UNVERIFIED",
+      "evidence": "APK artifact exists, but artifact presence does not prove installation or Accessibility Service restart."
+    }
+  },
+  "chronology": [
+    {
+      "seq": 1,
+      "phase": "Project baseline",
+      "event": "Current Universal Mobile Control source batch inspected.",
+      "result": "Java service, accessibility XML, manifest, Gradle configuration and debug APK are present."
+    },
+    {
+      "seq": 2,
+      "phase": "Accessibility",
+      "event": "Service capabilities audited.",
+      "result": "Window content retrieval, screenshot capture and gesture capability are declared."
+    },
+    {
+      "seq": 3,
+      "phase": "Vision",
+      "event": "Screen pipeline audited.",
+      "result": "Screenshot is converted to a software bitmap; UI tree and Latin/Devanagari OCR are placed into the cached JSON result."
+    },
+    {
+      "seq": 4,
+      "phase": "Action Mode",
+      "event": "Continuous action-mode refresh audited.",
+      "result": "Action Mode starts OCR/screenshot refresh every 3000 ms and schedules a 400 ms post-action refresh."
+    },
+    {
+      "seq": 5,
+      "phase": "Gesture callback",
+      "event": "Dedicated callback thread audited.",
+      "result": "Tap and swipe pass gesture callbacks to HandlerThread UMC-GestureCallbacks rather than the main handler."
+    },
+    {
+      "seq": 6,
+      "phase": "Tap",
+      "event": "Tap result semantics audited.",
+      "result": "dispatchGesture() acceptance is distinct from callback completion; timeout remains possible and latest known test timed out."
+    },
+    {
+      "seq": 7,
+      "phase": "Swipe",
+      "event": "Swipe result semantics audited.",
+      "result": "dispatchGesture() acceptance is distinct from callback completion; latest known test timed out."
+    },
+    {
+      "seq": 8,
+      "phase": "Back",
+      "event": "Global Back implementation audited.",
+      "result": "performGlobalAction(GLOBAL_ACTION_BACK) is used; earlier user test confirmed Back worked."
+    },
+    {
+      "seq": 9,
+      "phase": "Text input",
+      "event": "Type implementation audited.",
+      "result": "The /type endpoint searches FOCUS_INPUT, requires an editable node, and uses ACTION_SET_TEXT."
+    },
+    {
+      "seq": 10,
+      "phase": "Bridge",
+      "event": "HTTP result semantics audited.",
+      "result": "The bridge writes HTTP 200 for both success and application-level error JSON; JSON status/message is authoritative."
+    },
+    {
+      "seq": 11,
+      "phase": "Screen state",
+      "event": "Scan/cache semantics audited.",
+      "result": "/screen returns cached latestJson; /scan requests a new asynchronous scan and enables Action Mode."
+    },
+    {
+      "seq": 12,
+      "phase": "Current batch defects",
+      "event": "Concurrency and lifecycle risks identified.",
+      "result": "Action Mode can schedule repeated scans while a previous screenshot/OCR pipeline may still be running; recognizers are created per scan."
+    },
+    {
+      "seq": 13,
+      "phase": "Unsupported claim cleanup",
+      "event": "Home support claim audited.",
+      "result": "No /home endpoint exists in the current Java bridge; Home must not be counted as a supported bridge endpoint."
+    }
+  ],
+  "audit_findings": [
+    {
+      "id": "F1",
+      "severity": "CRITICAL",
+      "finding": "Tap/swipe are not runtime-verified because callback completion has timed out.",
+      "correction": "Do not report success from HTTP 200 or dispatchGesture() acceptance. Verify callback completion and a fresh post-action screen."
+    },
+    {
+      "id": "F2",
+      "severity": "HIGH",
+      "finding": "The HTTP layer always emits 200 even when the JSON body has status=error.",
+      "correction": "Keep JSON status/message authoritative for now; later return appropriate HTTP error codes."
+    },
+    {
+      "id": "F3",
+      "severity": "HIGH",
+      "finding": "Action Mode can start a new screenshot/OCR cycle every 3000 ms without an explicit in-flight scan guard.",
+      "correction": "Add a single-flight scan lock/state so only one screenshot/OCR pipeline is active at a time."
+    },
+    {
+      "id": "F4",
+      "severity": "HIGH",
+      "finding": "Tap/swipe call startActionMode(), which immediately initiates a scan before dispatching the gesture.",
+      "correction": "Separate action execution from vision refresh; execute the gesture first, then schedule the verification scan."
+    },
+    {
+      "id": "F5",
+      "severity": "MEDIUM",
+      "finding": "A new Latin and Devanagari TextRecognizer is created for every scan.",
+      "correction": "Reuse recognizers for the service lifetime and close them in onDestroy()."
+    },
+    {
+      "id": "F6",
+      "severity": "MEDIUM",
+      "finding": "onAccessibilityEvent() is empty.",
+      "correction": "Use relevant accessibility events to invalidate or refresh cached UI state when live UI updates are needed."
+    },
+    {
+      "id": "F7",
+      "severity": "MEDIUM",
+      "finding": "No /home endpoint exists.",
+      "correction": "Do not add Home to the supported API list until it is implemented and tested."
+    },
+    {
+      "id": "F8",
+      "severity": "MEDIUM",
+      "finding": "APK existence does not prove the installed service is the current build.",
+      "correction": "After installation, disable/re-enable the Accessibility Service and verify /action/status plus a fresh /scan before gesture testing."
+    }
+  ],
+  "corrected_truth_table": {
+    "/health": "source-supported endpoint; transport readiness only",
+    "/screen": "cached vision state; not a fresh scan",
+    "/scan": "asynchronous scan request; result must be polled",
+    "/action/status": "source-supported action-mode state",
+    "/tap": "implemented; runtime execution currently unverified",
+    "/swipe": "implemented; runtime execution currently unverified",
+    "/back": "implemented; earlier user-confirmed working",
+    "/type": "implemented through focused editable AccessibilityNodeInfo; current runtime result not independently verified in this audit",
+    "/home": "NOT IMPLEMENTED in current bridge",
+    "HTTP_200": "NOT sufficient proof of action success"
+  },
+  "verification_protocol": {
+    "level_1_transport": "HTTP response received",
+    "level_2_acceptance": "Accessibility API accepts the requested action",
+    "level_3_completion": "Gesture callback reports completed",
+    "level_4_visual_verification": "Fresh /screen result proves the expected UI change",
+    "rule": "Only level 4 is a fully verified phone action."
+  },
+  "next_correction_priority": [
+    "Verify current installed APK/service instance.",
+    "Diagnose why gesture callbacks time out.",
+    "Move gesture execution before verification scanning.",
+    "Make scan pipeline single-flight.",
+    "Reuse ML Kit recognizers.",
+    "Implement /home only if required, then test it."
+  ]
+}

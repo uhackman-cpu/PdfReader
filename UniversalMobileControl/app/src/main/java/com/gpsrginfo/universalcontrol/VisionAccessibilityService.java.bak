@@ -1,0 +1,139 @@
+package com.gpsrginfo.universalcontrol;
+
+import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityService.ScreenshotResult;
+import android.graphics.Bitmap;
+import android.graphics.Rect;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
+import android.view.Display;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityNodeInfo;
+import android.view.accessibility.AccessibilityWindowInfo;
+import com.google.mlkit.vision.common.InputImage;
+import com.google.mlkit.vision.text.Text;
+import com.google.mlkit.vision.text.TextRecognition;
+import com.google.mlkit.vision.text.TextRecognizer;
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions;
+import org.json.JSONArray;
+import org.json.JSONObject;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.ServerSocket;
+import java.net.Socket;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+
+public class VisionAccessibilityService extends AccessibilityService {
+    public static volatile VisionAccessibilityService instance;
+    public static volatile String latestJson = "{\"status\":\"not_scanned\",\"elements\":[],\"ocr\":[]}";
+    private final Executor executor = Executors.newSingleThreadExecutor();
+    private final Handler handler = new Handler(Looper.getMainLooper());
+    private volatile boolean serverStarted = false;
+
+    @Override public void onServiceConnected() { super.onServiceConnected(); instance = this; startLocalBridge(); }
+    @Override public void onAccessibilityEvent(AccessibilityEvent event) { /* event stream is intentionally passive; scans are requested explicitly */ }
+    @Override public void onInterrupt() { }
+    @Override public void onDestroy() { instance = null; super.onDestroy(); }
+
+    public void scanScreen() {
+        if (Build.VERSION.SDK_INT < 30) { MainActivity.setOutput("Screenshot API requires Android 11 or newer."); return; }
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY, executor, new TakeScreenshotCallback() {
+                @Override public void onSuccess(ScreenshotResult result) {
+                    Bitmap bitmap = Bitmap.wrapHardwareBuffer(result.getHardwareBuffer(), result.getColorSpace());
+                    result.getHardwareBuffer().close();
+                    if (bitmap == null) { MainActivity.setOutput("Screenshot returned no bitmap."); return; }
+                    Bitmap software = bitmap.copy(Bitmap.Config.ARGB_8888, false);
+                    bitmap.recycle();
+                    JSONObject root = new JSONObject();
+                    try {
+                        root.put("status", "scanning"); root.put("width", software.getWidth()); root.put("height", software.getHeight());
+                        root.put("timestamp_ms", System.currentTimeMillis());
+                        root.put("ui_elements", collectUiTree());
+                        root.put("ocr", new JSONArray());
+                    } catch (Exception ignored) { }
+                    final JSONObject payload = root;
+                    TextRecognizer latin = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS);
+                    TextRecognizer devanagari = TextRecognition.getClient(new DevanagariTextRecognizerOptions.Builder().build());
+                    InputImage image = InputImage.fromBitmap(software, 0);
+                    latin.process(image).addOnSuccessListener(t -> appendOcr(payload, t, "latin"))
+                        .addOnFailureListener(e -> appendError(payload, "latin", e.getMessage()))
+                        .addOnCompleteListener(task1 -> devanagari.process(image)
+                            .addOnSuccessListener(t -> appendOcr(payload, t, "devanagari"))
+                            .addOnFailureListener(e -> appendError(payload, "devanagari", e.getMessage()))
+                            .addOnCompleteListener(task2 -> {
+                                try { payload.put("status", "ok"); payload.put("completed_ms", System.currentTimeMillis()); latestJson = payload.toString(2); }
+                                catch (Exception ignored) { latestJson = payload.toString(); }
+                                latin.close(); devanagari.close(); software.recycle();
+                                MainActivity.setOutput(latestJson);
+                            }));
+                }
+                @Override public void onFailure(int errorCode) { MainActivity.setOutput("Screenshot failed. Error code: " + errorCode + ". Check Accessibility screenshot capability."); }
+            });
+        } catch (Exception e) { MainActivity.setOutput("Scan error: " + e.getMessage()); }
+    }
+
+    private JSONArray collectUiTree() {
+        JSONArray arr = new JSONArray(); int[] count = {0};
+        try {
+            for (AccessibilityWindowInfo w : getWindows()) {
+                AccessibilityNodeInfo root = w.getRoot();
+                if (root != null) walk(root, arr, count, 0);
+            }
+        } catch (Exception ignored) { }
+        return arr;
+    }
+    private void walk(AccessibilityNodeInfo node, JSONArray arr, int[] count, int depth) {
+        if (node == null || count[0] >= 500 || depth > 35) return;
+        try {
+            CharSequence txt = node.getText(), desc = node.getContentDescription();
+            Rect b = new Rect(); node.getBoundsInScreen(b);
+            boolean meaningful = (txt != null && txt.length() > 0) || (desc != null && desc.length() > 0) || node.isClickable() || node.isEditable();
+            if (meaningful) {
+                JSONObject o = new JSONObject();
+                o.put("id", "ui_" + count[0]++); o.put("type", node.getClassName() == null ? "unknown" : node.getClassName().toString());
+                o.put("text", txt == null ? "" : txt.toString()); o.put("description", desc == null ? "" : desc.toString());
+                o.put("bounds", new JSONObject().put("left", b.left).put("top", b.top).put("right", b.right).put("bottom", b.bottom));
+                o.put("clickable", node.isClickable()); o.put("editable", node.isEditable()); o.put("enabled", node.isEnabled()); arr.put(o);
+            }
+            for (int i=0; i<node.getChildCount(); i++) walk(node.getChild(i), arr, count, depth+1);
+        } catch (Exception ignored) { }
+    }
+    private void appendOcr(JSONObject payload, Text result, String engine) {
+        try {
+            JSONArray arr = payload.optJSONArray("ocr"); if (arr == null) { arr = new JSONArray(); payload.put("ocr", arr); }
+            for (Text.TextBlock block : result.getTextBlocks()) for (Text.Line line : block.getLines()) {
+                Rect b = line.getBoundingBox(); if (b == null) continue;
+                JSONObject item = new JSONObject(); item.put("text", line.getText()); item.put("engine", engine);
+                item.put("bounds", new JSONObject().put("left",b.left).put("top",b.top).put("right",b.right).put("bottom",b.bottom));
+                item.put("center", new JSONObject().put("x",b.centerX()).put("y",b.centerY())); arr.put(item);
+            }
+        } catch (Exception ignored) { }
+    }
+    private void appendError(JSONObject payload, String engine, String message) { try { payload.put(engine + "_error", message == null ? "unknown" : message); } catch (Exception ignored) { } }
+
+    private void startLocalBridge() {
+        if (serverStarted) return; serverStarted = true;
+        Thread t = new Thread(() -> {
+            try (ServerSocket server = new ServerSocket(8765, 20, java.net.InetAddress.getByName("127.0.0.1"))) {
+                while (!Thread.currentThread().isInterrupted()) {
+                    try (Socket client = server.accept()) {
+                        client.setSoTimeout(2000); BufferedReader in = new BufferedReader(new InputStreamReader(client.getInputStream(), StandardCharsets.UTF_8));
+                        String line = in.readLine(); if (line == null) continue; String path = line.split(" ").length > 1 ? line.split(" ")[1] : "/health";
+                        while ((line = in.readLine()) != null && !line.isEmpty()) { }
+                        if (path.startsWith("/scan")) { handler.post(this::scanScreen); }
+                        String body = path.startsWith("/health") ? "{\"status\":\"ok\",\"service\":\"universal-mobile-control\",\"version\":\"0.1.0\"}" : latestJson;
+                        byte[] bytes = body.getBytes(StandardCharsets.UTF_8); OutputStream out = client.getOutputStream();
+                        String headers = "HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nAccess-Control-Allow-Origin: *\r\nContent-Length: " + bytes.length + "\r\nConnection: close\r\n\r\n";
+                        out.write(headers.getBytes(StandardCharsets.UTF_8)); out.write(bytes); out.flush();
+                    } catch (Exception ignored) { }
+                }
+            } catch (Exception e) { latestJson = "{\"status\":\"bridge_error\",\"message\":\"local bridge could not bind port 8765\"}"; }
+        }, "UniversalMobileControl-LocalBridge"); t.setDaemon(true); t.start();
+    }
+}

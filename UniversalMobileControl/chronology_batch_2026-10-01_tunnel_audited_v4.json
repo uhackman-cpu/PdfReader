@@ -1,0 +1,117 @@
+{
+  "document": "Cloudflare Tunnel — Current Batch Audited Chronology",
+  "batch_id": "cf_tunnel_2026-10-01_evidence_1000333221",
+  "revision": 4,
+  "audit_date": "2026-10-07",
+  "audit_status": "AUDITED_WITH_CORRECTIONS",
+  "source_evidence": {
+    "filename": "1000333221.jpg",
+    "type": "screenshot",
+    "log_timestamp_range": "2026-10-01T17:51:25Z–2026-10-01T17:51:28Z",
+    "current_batch_check": "No newer conversation image/evidence is available in the current batch; therefore no new runtime success is inferred."
+  },
+  "chronology": [
+    {
+      "step": 1,
+      "event": "Cloudflared precheck initiated",
+      "status": "PASS"
+    },
+    {
+      "step": 2,
+      "event": "UDP/QUIC connectivity",
+      "status": "PASS",
+      "evidence": "QUIC connection successful; status=pass."
+    },
+    {
+      "step": 3,
+      "event": "TCP/HTTP2 connectivity",
+      "status": "PASS",
+      "evidence": "HTTP/2 connection successful; status=pass."
+    },
+    {
+      "step": 4,
+      "event": "Cloudflare API reachability",
+      "status": "PASS",
+      "evidence": "API is reachable; status=pass."
+    },
+    {
+      "step": 5,
+      "event": "Precheck completion",
+      "status": "PASS",
+      "evidence": "hard_fail=false; suggested_protocol=quic."
+    },
+    {
+      "step": 6,
+      "event": "Curve preferences recorded",
+      "status": "PASS",
+      "evidence": "X25519MLKEM768, CurveID(65074), CurveP256."
+    },
+    {
+      "step": 7,
+      "event": "First QUIC tunnel connection",
+      "status": "PASS",
+      "evidence": "del02; protocol=quic."
+    },
+    {
+      "step": 8,
+      "event": "Ingress configuration",
+      "status": "PASS",
+      "evidence": "mcp.gpsrginfo.in → http://127.0.0.1:8787; fallback 404; warp-routing disabled."
+    },
+    {
+      "step": 9,
+      "event": "Second QUIC tunnel connection",
+      "status": "PASS",
+      "evidence": "del03; protocol=quic."
+    },
+    {
+      "step": 10,
+      "event": "Third QUIC tunnel connection",
+      "status": "PASS",
+      "evidence": "del02; protocol=quic."
+    },
+    {
+      "step": 11,
+      "event": "Fourth QUIC tunnel connection",
+      "status": "PASS",
+      "evidence": "del03; protocol=quic."
+    },
+    {
+      "step": 12,
+      "event": "End-to-end evidence boundary",
+      "status": "NOT_VERIFIED",
+      "evidence": "No proof of local MCP /health, public /health, or an actual MCP request."
+    }
+  ],
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "HIGH",
+      "finding": "Origin health remains unverified.",
+      "correction": "Verify local 127.0.0.1:8787/health."
+    },
+    {
+      "id": "F2",
+      "severity": "MEDIUM",
+      "finding": "Public ingress remains unverified end-to-end.",
+      "correction": "Verify mcp.gpsrginfo.in/health and one MCP request."
+    },
+    {
+      "id": "F3",
+      "severity": "LOW",
+      "finding": "Evidence is dated 2026-10-01, not fresh 2026-10-07 runtime evidence.",
+      "correction": "Capture fresh logs/request evidence."
+    }
+  ],
+  "verification": {
+    "network_precheck": "PASS",
+    "tunnel_registration": "PASS — 4 QUIC connections",
+    "ingress_configuration": "PASS",
+    "local_origin_health": "NOT_VERIFIED",
+    "public_health": "NOT_VERIFIED",
+    "end_to_end_mcp_request": "NOT_VERIFIED",
+    "full_current_success": false
+  },
+  "overall_status": "TUNNEL_CONNECTED_AND_CONFIGURED_ORIGIN_REQUIRES_END_TO_END_VERIFICATION",
+  "correction_rule": "Do not upgrade to FULL_SUCCESS without fresh end-to-end evidence."
+}
