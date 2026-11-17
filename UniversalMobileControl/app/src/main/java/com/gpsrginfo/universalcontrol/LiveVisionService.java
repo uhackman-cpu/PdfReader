@@ -21,6 +21,7 @@ import android.os.HandlerThread;
 import android.os.IBinder;
 import android.util.Base64;
 import android.util.DisplayMetrics;
+import android.view.Display;
 import android.view.WindowManager;
 import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
@@ -81,11 +82,18 @@ public class LiveVisionService extends Service {
                 @Override public void onStop() { projection = null; stopCapture(); stopSelf(); }
             }, worker);
             DisplayMetrics metrics = new DisplayMetrics();
-            WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
             if (Build.VERSION.SDK_INT >= 30) {
-                android.view.Display display = getDisplay();
-                if (display != null) display.getRealMetrics(metrics); else wm.getDefaultDisplay().getRealMetrics(metrics);
-            } else wm.getDefaultDisplay().getRealMetrics(metrics);
+                DisplayManager displayManager = (DisplayManager) getSystemService(Context.DISPLAY_SERVICE);
+                Display display = displayManager != null ? displayManager.getDisplay(Display.DEFAULT_DISPLAY) : null;
+                if (display == null) {
+                    throw new IllegalStateException("Default display is unavailable for MediaProjection sizing");
+                }
+                display.getRealMetrics(metrics);
+            } else {
+                WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+                if (wm == null) throw new IllegalStateException("WindowManager is unavailable");
+                wm.getDefaultDisplay().getRealMetrics(metrics);
+            }
             width = metrics.widthPixels; height = metrics.heightPixels; density = metrics.densityDpi;
             screenWidth = width; screenHeight = height; lastError = "";
             imageReader = ImageReader.newInstance(width, height, PixelFormat.RGBA_8888, 3);
